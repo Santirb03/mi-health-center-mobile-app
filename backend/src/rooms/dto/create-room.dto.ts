@@ -1,0 +1,21 @@
+import {
+    IsNumber,
+    IsOptional,
+    IsString,
+    Min,
+    MinLength,
+} from 'class-validator';
+
+export class CreateRoomDto {
+    @IsString()
+    @MinLength(2)
+    name: string;
+
+    @IsOptional()
+    @IsString()
+    description?: string;
+
+    @IsNumber()
+    @Min(0)
+    pricePerHour: number;
+}
