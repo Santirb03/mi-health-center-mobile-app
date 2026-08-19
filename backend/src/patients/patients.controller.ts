@@ -3,6 +3,7 @@ import {
     Controller,
     Get,
     Param,
+    Patch,
     Post,
     Req,
     UseGuards,
@@ -11,6 +12,7 @@ import { Request } from 'express';
 
 import { PatientsService } from './patients.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
+import { UpdatePatientDto } from './dto/update-patient.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 interface AuthenticatedRequest extends Request {
@@ -60,4 +62,19 @@ export class PatientsController {
             id,
         );
     }
+
+    @Patch(':id')
+    @UseGuards(JwtAuthGuard)
+    update(
+        @Req() req: AuthenticatedRequest,
+        @Param('id') id: string,
+        @Body() dto: UpdatePatientDto,
+    ) {
+        return this.patientsService.update(
+            req.user.userId,
+            id,
+            dto,
+        );
+    }
 }
+
