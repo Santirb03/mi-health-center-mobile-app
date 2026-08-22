@@ -153,3 +153,11 @@ model Payment {
 
   @@map("payments")
 }
+
+model StripeWebhookEvent {
+  id          String   @id
+  type        String
+  processedAt DateTime @default(now())
+
+  createdAt   DateTime @default(now())
+}
