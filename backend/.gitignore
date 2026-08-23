@@ -35,5 +35,3 @@ Thumbs.db
 .temp/
 .tmp/
 
-# Postman local data
-.postman/
