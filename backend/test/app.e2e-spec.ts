@@ -1,7 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import {
+  INestApplication,
+  ValidationPipe,
+} from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
+
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 
@@ -11,8 +15,10 @@ describe('Reservations E2E', () => {
 
   let email: string;
   let accessToken: string;
+
   let roomId: string;
   let reservationId: string;
+  let patientId: string;
 
   const password = 'Password123!';
 
@@ -50,6 +56,16 @@ describe('Reservations E2E', () => {
   });
 
   afterAll(async () => {
+    // Delete patient created during E2E
+    if (patientId) {
+      await prisma.patient.delete({
+        where: {
+          id: patientId,
+        },
+      });
+    }
+
+    // Delete payment associated with reservation
     if (reservationId) {
       await prisma.payment.deleteMany({
         where: {
@@ -64,6 +80,7 @@ describe('Reservations E2E', () => {
       });
     }
 
+    // Delete test room
     if (roomId) {
       await prisma.room.delete({
         where: {
@@ -74,6 +91,10 @@ describe('Reservations E2E', () => {
 
     await app.close();
   });
+
+  // =========================
+  // AUTH
+  // =========================
 
   it('should register a new doctor', async () => {
     const response = await request(app.getHttpServer())
@@ -93,6 +114,12 @@ describe('Reservations E2E', () => {
     expect(response.body.role).toBe('DOCTOR');
 
     expect(response.body.doctorProfile).toBeDefined();
+    expect(response.body.doctorProfile.firstName).toBe(
+      'E2E',
+    );
+    expect(response.body.doctorProfile.lastName).toBe(
+      'Doctor',
+    );
   });
 
   it('should login and return an access token', async () => {
@@ -106,10 +133,16 @@ describe('Reservations E2E', () => {
 
     expect(response.body).toHaveProperty('accessToken');
     expect(typeof response.body.accessToken).toBe('string');
-    expect(response.body.accessToken.length).toBeGreaterThan(0);
+    expect(response.body.accessToken.length).toBeGreaterThan(
+      0,
+    );
 
     accessToken = response.body.accessToken;
   });
+
+  // =========================
+  // ROOMS
+  // =========================
 
   it('should return available rooms', async () => {
     const response = await request(app.getHttpServer())
@@ -125,10 +158,17 @@ describe('Reservations E2E', () => {
     expect(room).toBeDefined();
   });
 
+  // =========================
+  // RESERVATIONS
+  // =========================
+
   it('should create a reservation', async () => {
     const response = await request(app.getHttpServer())
       .post('/reservations')
-      .set('Authorization', `Bearer ${accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
       .send({
         roomId,
         startTime: '2030-01-10T10:00:00.000Z',
@@ -138,9 +178,7 @@ describe('Reservations E2E', () => {
 
     expect(response.body).toHaveProperty('id');
     expect(response.body.roomId).toBe(roomId);
-
     expect(response.body.totalPrice).toBe('1000');
-
     expect(response.body.status).toBe('PENDING');
 
     reservationId = response.body.id;
@@ -149,7 +187,10 @@ describe('Reservations E2E', () => {
   it('should return the doctor reservations', async () => {
     const response = await request(app.getHttpServer())
       .get('/reservations')
-      .set('Authorization', `Bearer ${accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
       .expect(200);
 
     expect(Array.isArray(response.body)).toBe(true);
@@ -166,7 +207,10 @@ describe('Reservations E2E', () => {
   it('should return a single reservation', async () => {
     const response = await request(app.getHttpServer())
       .get(`/reservations/${reservationId}`)
-      .set('Authorization', `Bearer ${accessToken}`)
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
       .expect(200);
 
     expect(response.body.id).toBe(reservationId);
@@ -176,11 +220,104 @@ describe('Reservations E2E', () => {
 
   it('should cancel the reservation', async () => {
     const response = await request(app.getHttpServer())
-      .patch(`/reservations/${reservationId}/cancel`)
-      .set('Authorization', `Bearer ${accessToken}`)
+      .patch(
+        `/reservations/${reservationId}/cancel`,
+      )
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
       .expect(200);
 
     expect(response.body.id).toBe(reservationId);
     expect(response.body.status).toBe('CANCELLED');
+  });
+
+  // =========================
+  // PATIENTS
+  // =========================
+
+  it('should create a patient', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/patients')
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
+      .send({
+        firstName: 'John',
+        lastName: 'Doe',
+        phone: '4421234567',
+        email: 'john.e2e@test.com',
+        dateOfBirth: '1990-01-01',
+      })
+      .expect(201);
+
+    expect(response.body).toHaveProperty('id');
+    expect(response.body.firstName).toBe('John');
+    expect(response.body.lastName).toBe('Doe');
+    expect(response.body.phone).toBe('4421234567');
+    expect(response.body.email).toBe(
+      'john.e2e@test.com',
+    );
+
+    patientId = response.body.id;
+  });
+
+  it('should return the doctor patients', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/patients')
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
+      .expect(200);
+
+    expect(Array.isArray(response.body)).toBe(true);
+
+    const patient = response.body.find(
+      (patient: { id: string }) =>
+        patient.id === patientId,
+    );
+
+    expect(patient).toBeDefined();
+    expect(patient.firstName).toBe('John');
+    expect(patient.lastName).toBe('Doe');
+  });
+
+  it('should return a single patient', async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/patients/${patientId}`)
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
+      .expect(200);
+
+    expect(response.body.id).toBe(patientId);
+    expect(response.body.firstName).toBe('John');
+    expect(response.body.lastName).toBe('Doe');
+  });
+
+  it('should update the patient', async () => {
+    const response = await request(app.getHttpServer())
+      .patch(`/patients/${patientId}`)
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
+      .send({
+        firstName: 'Jonathan',
+        phone: '4429876543',
+      })
+      .expect(200);
+
+    expect(response.body.id).toBe(patientId);
+    expect(response.body.firstName).toBe(
+      'Jonathan',
+    );
+    expect(response.body.phone).toBe(
+      '4429876543',
+    );
   });
 });
