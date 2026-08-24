@@ -34,9 +34,7 @@ describe('PaymentsService', () => {
         $transaction: jest.fn(
             async (
                 callback: (tx: typeof mockTx) => Promise<unknown>,
-            ) => {
-                return callback(mockTx);
-            },
+            ) => callback(mockTx),
         ),
     };
 
@@ -85,29 +83,22 @@ describe('PaymentsService', () => {
                 },
             } as Stripe.Event;
 
-            const result =
-                await service.handleStripeWebhook(event);
+            const result = await service.handleStripeWebhook(event);
 
-            expect(
-                mockStripeWebhookEventCreate,
-            ).toHaveBeenCalledWith({
+            expect(mockStripeWebhookEventCreate).toHaveBeenCalledWith({
                 data: {
                     id: 'evt_test_123',
                     type: 'payment_intent.succeeded',
                 },
             });
 
-            expect(
-                mockPaymentFindUnique,
-            ).toHaveBeenCalledWith({
+            expect(mockPaymentFindUnique).toHaveBeenCalledWith({
                 where: {
                     transactionId: 'pi_test_123',
                 },
             });
 
-            expect(
-                mockPaymentUpdate,
-            ).toHaveBeenCalledWith({
+            expect(mockPaymentUpdate).toHaveBeenCalledWith({
                 where: {
                     id: 'payment-123',
                 },
@@ -116,9 +107,7 @@ describe('PaymentsService', () => {
                 },
             });
 
-            expect(
-                mockReservationUpdate,
-            ).toHaveBeenCalledWith({
+            expect(mockReservationUpdate).toHaveBeenCalledWith({
                 where: {
                     id: 'reservation-123',
                 },
@@ -166,13 +155,8 @@ describe('PaymentsService', () => {
                 ),
             );
 
-            expect(
-                mockPaymentUpdate,
-            ).not.toHaveBeenCalled();
-
-            expect(
-                mockReservationUpdate,
-            ).not.toHaveBeenCalled();
+            expect(mockPaymentUpdate).not.toHaveBeenCalled();
+            expect(mockReservationUpdate).not.toHaveBeenCalled();
         });
 
         it('should throw if the payment does not exist', async () => {
@@ -197,18 +181,11 @@ describe('PaymentsService', () => {
             await expect(
                 service.handleStripeWebhook(event),
             ).rejects.toThrow(
-                new NotFoundException(
-                    'Payment not found',
-                ),
+                new NotFoundException('Payment not found'),
             );
 
-            expect(
-                mockPaymentUpdate,
-            ).not.toHaveBeenCalled();
-
-            expect(
-                mockReservationUpdate,
-            ).not.toHaveBeenCalled();
+            expect(mockPaymentUpdate).not.toHaveBeenCalled();
+            expect(mockReservationUpdate).not.toHaveBeenCalled();
         });
 
         it('should ignore a duplicate webhook event', async () => {
@@ -241,17 +218,9 @@ describe('PaymentsService', () => {
                 duplicate: true,
             });
 
-            expect(
-                mockPaymentFindUnique,
-            ).not.toHaveBeenCalled();
-
-            expect(
-                mockPaymentUpdate,
-            ).not.toHaveBeenCalled();
-
-            expect(
-                mockReservationUpdate,
-            ).not.toHaveBeenCalled();
+            expect(mockPaymentFindUnique).not.toHaveBeenCalled();
+            expect(mockPaymentUpdate).not.toHaveBeenCalled();
+            expect(mockReservationUpdate).not.toHaveBeenCalled();
         });
     });
 });

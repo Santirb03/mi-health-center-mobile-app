@@ -15,23 +15,41 @@ export class PaymentsService {
         private readonly configService: ConfigService,
         private readonly prisma: PrismaService,
     ) {
-        this.stripe = new Stripe(
-            this.configService.get<string>('STRIPE_SECRET_KEY')!,
+        const stripeSecret = this.configService.get<string>(
+            'STRIPE_SECRET_KEY',
         );
+
+        if (!stripeSecret) {
+            throw new Error('STRIPE_SECRET_KEY is not configured');
+        }
+
+        this.stripe = new Stripe(stripeSecret);
     }
 
-    async createPaymentIntent(reservationId: string) {
+    async createPaymentIntent(
+        userId: string,
+        reservationId: string,
+    ) {
+        const doctor = await this.prisma.doctorProfile.findUnique({
+            where: {
+                userId,
+            },
+        });
+
+        if (!doctor) {
+            throw new NotFoundException('Doctor profile not found');
+        }
+
         const reservation =
-            await this.prisma.reservation.findUnique({
+            await this.prisma.reservation.findFirst({
                 where: {
                     id: reservationId,
+                    doctorId: doctor.id,
                 },
             });
 
         if (!reservation) {
-            throw new NotFoundException(
-                'Reservation not found',
-            );
+            throw new NotFoundException('Reservation not found');
         }
 
         if (reservation.status !== 'PENDING') {
@@ -40,8 +58,6 @@ export class PaymentsService {
             );
         }
 
-        // Si ya existe un Payment para esta reserva,
-        // reutilizamos el PaymentIntent existente.
         const existingPayment =
             await this.prisma.payment.findUnique({
                 where: {
@@ -49,19 +65,22 @@ export class PaymentsService {
                 },
             });
 
-        if (existingPayment) {
-            if (existingPayment.status === 'PAID') {
-                throw new BadRequestException(
-                    'Reservation has already been paid',
+        if (existingPayment?.status === 'PAID') {
+            throw new BadRequestException(
+                'Reservation has already been paid',
+            );
+        }
+
+        if (existingPayment?.transactionId) {
+            const existingPaymentIntent =
+                await this.stripe.paymentIntents.retrieve(
+                    existingPayment.transactionId,
                 );
-            }
 
-            if (existingPayment.transactionId) {
-                const existingPaymentIntent =
-                    await this.stripe.paymentIntents.retrieve(
-                        existingPayment.transactionId,
-                    );
-
+            if (
+                existingPaymentIntent.status !== 'canceled' &&
+                existingPaymentIntent.client_secret
+            ) {
                 return {
                     clientSecret:
                         existingPaymentIntent.client_secret,
@@ -75,9 +94,12 @@ export class PaymentsService {
             Number(reservation.totalPrice) * 100,
         );
 
-        // La reservationId funciona como idempotency key.
-        // Si la misma petición llega nuevamente a Stripe,
-        // Stripe devuelve el mismo PaymentIntent.
+        if (amountInCents <= 0) {
+            throw new BadRequestException(
+                'Payment amount must be greater than zero',
+            );
+        }
+
         const paymentIntent =
             await this.stripe.paymentIntents.create(
                 {
@@ -85,22 +107,38 @@ export class PaymentsService {
                     currency: 'mxn',
                     metadata: {
                         reservationId: reservation.id,
+                        doctorId: doctor.id,
                     },
                 },
                 {
-                    idempotencyKey: `reservation-${reservation.id}`,
+                    idempotencyKey:
+                        `reservation-${reservation.id}`,
                 },
             );
 
-        await this.prisma.payment.create({
-            data: {
-                reservationId: reservation.id,
-                amount: reservation.totalPrice,
-                status: 'PENDING',
-                provider: 'stripe',
-                transactionId: paymentIntent.id,
-            },
-        });
+        if (existingPayment) {
+            await this.prisma.payment.update({
+                where: {
+                    id: existingPayment.id,
+                },
+                data: {
+                    amount: reservation.totalPrice,
+                    status: 'PENDING',
+                    provider: 'stripe',
+                    transactionId: paymentIntent.id,
+                },
+            });
+        } else {
+            await this.prisma.payment.create({
+                data: {
+                    reservationId: reservation.id,
+                    amount: reservation.totalPrice,
+                    status: 'PENDING',
+                    provider: 'stripe',
+                    transactionId: paymentIntent.id,
+                },
+            });
+        }
 
         return {
             clientSecret: paymentIntent.client_secret,
@@ -110,11 +148,6 @@ export class PaymentsService {
 
     async handleStripeWebhook(event: Stripe.Event) {
         return this.prisma.$transaction(async (tx) => {
-            // Intentamos registrar el evento.
-            //
-            // Stripe puede mandar el mismo webhook más de una vez.
-            // Como StripeWebhookEvent.id es PRIMARY KEY,
-            // un evento repetido producirá P2002.
             try {
                 await tx.stripeWebhookEvent.create({
                     data: {
@@ -141,11 +174,6 @@ export class PaymentsService {
                 throw error;
             }
 
-            console.log(
-                'Stripe event:',
-                event.type,
-            );
-
             if (event.type === 'payment_intent.succeeded') {
                 const paymentIntent =
                     event.data.object as Stripe.PaymentIntent;
@@ -153,8 +181,7 @@ export class PaymentsService {
                 const payment =
                     await tx.payment.findUnique({
                         where: {
-                            transactionId:
-                                paymentIntent.id,
+                            transactionId: paymentIntent.id,
                         },
                     });
 
@@ -164,22 +191,18 @@ export class PaymentsService {
                     );
                 }
 
-                // Verificamos que el monto que Stripe confirmó
-                // sea exactamente el monto de nuestra reserva.
                 const expectedAmount = Math.round(
                     Number(payment.amount) * 100,
                 );
 
                 if (
-                    paymentIntent.amount !==
-                    expectedAmount
+                    paymentIntent.amount !== expectedAmount
                 ) {
                     throw new BadRequestException(
                         'Payment amount does not match Stripe amount',
                     );
                 }
 
-                // Si ya estaba pagado, no hacemos nada.
                 if (payment.status === 'PAID') {
                     return {
                         duplicate: false,
@@ -187,8 +210,6 @@ export class PaymentsService {
                     };
                 }
 
-                // Payment y Reservation se actualizan
-                // dentro de la misma transacción.
                 await tx.payment.update({
                     where: {
                         id: payment.id,
@@ -206,6 +227,58 @@ export class PaymentsService {
                         status: 'CONFIRMED',
                     },
                 });
+            }
+
+            if (
+                event.type ===
+                'payment_intent.payment_failed'
+            ) {
+                const paymentIntent =
+                    event.data.object as Stripe.PaymentIntent;
+
+                const payment =
+                    await tx.payment.findUnique({
+                        where: {
+                            transactionId: paymentIntent.id,
+                        },
+                    });
+
+                if (payment) {
+                    await tx.payment.update({
+                        where: {
+                            id: payment.id,
+                        },
+                        data: {
+                            status: 'FAILED',
+                        },
+                    });
+                }
+            }
+
+            if (
+                event.type ===
+                'payment_intent.canceled'
+            ) {
+                const paymentIntent =
+                    event.data.object as Stripe.PaymentIntent;
+
+                const payment =
+                    await tx.payment.findUnique({
+                        where: {
+                            transactionId: paymentIntent.id,
+                        },
+                    });
+
+                if (payment) {
+                    await tx.payment.update({
+                        where: {
+                            id: payment.id,
+                        },
+                        data: {
+                            status: 'FAILED',
+                        },
+                    });
+                }
             }
 
             return {

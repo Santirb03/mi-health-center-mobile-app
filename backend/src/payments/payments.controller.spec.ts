@@ -1,4 +1,7 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import {
+    Test,
+    TestingModule,
+} from '@nestjs/testing';
 
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
@@ -15,11 +18,17 @@ describe('PaymentsController', () => {
 
         const module: TestingModule =
             await Test.createTestingModule({
-                controllers: [PaymentsController],
+                controllers: [
+                    PaymentsController,
+                ],
+
                 providers: [
                     {
-                        provide: PaymentsService,
-                        useValue: mockPaymentsService,
+                        provide:
+                            PaymentsService,
+
+                        useValue:
+                            mockPaymentsService,
                     },
                 ],
             }).compile();
@@ -31,7 +40,7 @@ describe('PaymentsController', () => {
     });
 
     describe('createPaymentIntent', () => {
-        it('should create a payment intent for the reservation', async () => {
+        it('should create a payment intent for the authenticated doctor reservation', async () => {
             const req = {
                 user: {
                     userId: 'user-123',
@@ -41,7 +50,10 @@ describe('PaymentsController', () => {
             } as any;
 
             const expectedResult = {
-                clientSecret: 'pi_test_secret',
+                clientSecret:
+                    'pi_test_secret',
+                paymentIntentId:
+                    'pi_test',
             };
 
             mockPaymentsService.createPaymentIntent.mockResolvedValue(
@@ -55,10 +67,16 @@ describe('PaymentsController', () => {
                 );
 
             expect(
-                mockPaymentsService.createPaymentIntent,
-            ).toHaveBeenCalledWith('reservation-123');
+                mockPaymentsService
+                    .createPaymentIntent,
+            ).toHaveBeenCalledWith(
+                'user-123',
+                'reservation-123',
+            );
 
-            expect(result).toEqual(expectedResult);
+            expect(result).toEqual(
+                expectedResult,
+            );
         });
     });
 });

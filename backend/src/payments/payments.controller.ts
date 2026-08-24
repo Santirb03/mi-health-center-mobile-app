@@ -31,6 +31,7 @@ export class PaymentsController {
         @Param('reservationId') reservationId: string,
     ) {
         return this.paymentsService.createPaymentIntent(
+            req.user.userId,
             reservationId,
         );
     }

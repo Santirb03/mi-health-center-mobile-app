@@ -2,15 +2,11 @@ import {
   ConflictException,
   UnauthorizedException,
 } from '@nestjs/common';
-
 import { Test, TestingModule } from '@nestjs/testing';
-
 import { JwtService } from '@nestjs/jwt';
-
 import * as argon2 from 'argon2';
 
 import { AuthService } from './auth.service';
-
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('AuthService', () => {
@@ -32,28 +28,22 @@ describe('AuthService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    const module: TestingModule =
-      await Test.createTestingModule({
-        providers: [
-          AuthService,
-          {
-            provide: PrismaService,
-            useValue: mockPrisma,
-          },
-          {
-            provide: JwtService,
-            useValue: mockJwtService,
-          },
-        ],
-      }).compile();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: PrismaService,
+          useValue: mockPrisma,
+        },
+        {
+          provide: JwtService,
+          useValue: mockJwtService,
+        },
+      ],
+    }).compile();
 
-    service =
-      module.get<AuthService>(AuthService);
+    service = module.get<AuthService>(AuthService);
   });
-
-  // =========================
-  // REGISTER
-  // =========================
 
   describe('register', () => {
     it('should register a new user and create a doctor profile', async () => {
@@ -64,7 +54,6 @@ describe('AuthService', () => {
         email: 'doctor@test.com',
         role: 'DOCTOR',
         passwordHash: 'hashed-password',
-
         doctorProfile: {
           id: 'doctor-123',
           firstName: 'John',
@@ -83,24 +72,18 @@ describe('AuthService', () => {
         specialty: 'Cardiology',
       };
 
-      const result =
-        await service.register(dto);
+      const result = await service.register(dto);
 
-      expect(
-        mockPrisma.user.findUnique,
-      ).toHaveBeenCalledWith({
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
         where: {
           email: dto.email,
         },
       });
 
-      expect(
-        mockPrisma.user.create,
-      ).toHaveBeenCalledWith(
+      expect(mockPrisma.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             email: dto.email,
-
             doctorProfile: {
               create: {
                 firstName: dto.firstName,
@@ -110,7 +93,6 @@ describe('AuthService', () => {
               },
             },
           }),
-
           include: {
             doctorProfile: true,
           },
@@ -121,7 +103,6 @@ describe('AuthService', () => {
         id: 'user-123',
         email: 'doctor@test.com',
         role: 'DOCTOR',
-
         doctorProfile: {
           id: 'doctor-123',
           firstName: 'John',
@@ -131,9 +112,7 @@ describe('AuthService', () => {
         },
       });
 
-      expect(result).not.toHaveProperty(
-        'passwordHash',
-      );
+      expect(result).not.toHaveProperty('passwordHash');
     });
 
     it('should hash the password before creating the user', async () => {
@@ -158,19 +137,11 @@ describe('AuthService', () => {
 
       await service.register(dto);
 
-      const createCall =
-        mockPrisma.user.create.mock.calls[0][0];
+      const createCall = mockPrisma.user.create.mock.calls[0][0];
+      const passwordHash = createCall.data.passwordHash;
 
-      expect(
-        createCall.data.passwordHash,
-      ).not.toBe(dto.password);
-
-      expect(
-        await argon2.verify(
-          createCall.data.passwordHash,
-          dto.password,
-        ),
-      ).toBe(true);
+      expect(passwordHash).not.toBe(dto.password);
+      expect(await argon2.verify(passwordHash, dto.password)).toBe(true);
     });
 
     it('should throw if the email is already registered', async () => {
@@ -188,28 +159,17 @@ describe('AuthService', () => {
         specialty: 'Cardiology',
       };
 
-      await expect(
-        service.register(dto),
-      ).rejects.toThrow(
-        new ConflictException(
-          'Email already registered',
-        ),
+      await expect(service.register(dto)).rejects.toThrow(
+        new ConflictException('Email already registered'),
       );
 
-      expect(
-        mockPrisma.user.create,
-      ).not.toHaveBeenCalled();
+      expect(mockPrisma.user.create).not.toHaveBeenCalled();
     });
   });
 
-  // =========================
-  // LOGIN
-  // =========================
-
   describe('login', () => {
     it('should login with valid credentials and return access and refresh tokens', async () => {
-      const passwordHash =
-        await argon2.hash('password123');
+      const passwordHash = await argon2.hash('password123');
 
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'user-123',
@@ -219,17 +179,12 @@ describe('AuthService', () => {
       });
 
       mockJwtService.signAsync
-        .mockResolvedValueOnce(
-          'access-token-123',
-        )
-        .mockResolvedValueOnce(
-          'refresh-token-123',
-        );
+        .mockResolvedValueOnce('access-token-123')
+        .mockResolvedValueOnce('refresh-token-123');
 
       mockPrisma.user.update.mockResolvedValue({
         id: 'user-123',
-        refreshTokenHash:
-          'hashed-refresh-token',
+        refreshTokenHash: 'hashed-refresh-token',
       });
 
       const dto = {
@@ -237,27 +192,17 @@ describe('AuthService', () => {
         password: 'password123',
       };
 
-      const result =
-        await service.login(dto);
+      const result = await service.login(dto);
 
-      expect(
-        mockPrisma.user.findUnique,
-      ).toHaveBeenCalledWith({
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({
         where: {
           email: dto.email,
         },
       });
 
-      expect(
-        mockJwtService.signAsync,
-      ).toHaveBeenCalledTimes(2);
+      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(2);
 
-      /*
-       * ACCESS TOKEN
-       */
-      expect(
-        mockJwtService.signAsync,
-      ).toHaveBeenNthCalledWith(
+      expect(mockJwtService.signAsync).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({
           sub: 'user-123',
@@ -271,12 +216,7 @@ describe('AuthService', () => {
         },
       );
 
-      /*
-       * REFRESH TOKEN
-       */
-      expect(
-        mockJwtService.signAsync,
-      ).toHaveBeenNthCalledWith(
+      expect(mockJwtService.signAsync).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
           sub: 'user-123',
@@ -290,25 +230,20 @@ describe('AuthService', () => {
         },
       );
 
-      expect(
-        mockPrisma.user.update,
-      ).toHaveBeenCalledWith({
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: {
           id: 'user-123',
         },
-
         data: {
-          refreshTokenHash:
-            expect.any(String),
+          refreshTokenHash: expect.any(String),
         },
       });
 
-      const updateCall =
-        mockPrisma.user.update.mock.calls[0][0];
+      const updateCall = mockPrisma.user.update.mock.calls[0][0];
 
-      expect(
-        updateCall.data.refreshTokenHash,
-      ).not.toBe('refresh-token-123');
+      expect(updateCall.data.refreshTokenHash).not.toBe(
+        'refresh-token-123',
+      );
 
       expect(result).toEqual({
         accessToken: 'access-token-123',
@@ -317,8 +252,7 @@ describe('AuthService', () => {
     });
 
     it('should hash the refresh token before storing it', async () => {
-      const passwordHash =
-        await argon2.hash('password123');
+      const passwordHash = await argon2.hash('password123');
 
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'user-123',
@@ -328,17 +262,12 @@ describe('AuthService', () => {
       });
 
       mockJwtService.signAsync
-        .mockResolvedValueOnce(
-          'access-token-123',
-        )
-        .mockResolvedValueOnce(
-          'refresh-token-123',
-        );
+        .mockResolvedValueOnce('access-token-123')
+        .mockResolvedValueOnce('refresh-token-123');
 
       mockPrisma.user.update.mockResolvedValue({
         id: 'user-123',
-        refreshTokenHash:
-          'hashed-refresh-token',
+        refreshTokenHash: 'hashed-refresh-token',
       });
 
       await service.login({
@@ -346,28 +275,17 @@ describe('AuthService', () => {
         password: 'password123',
       });
 
-      const updateCall =
-        mockPrisma.user.update.mock.calls[0][0];
+      const updateCall = mockPrisma.user.update.mock.calls[0][0];
+      const storedHash = updateCall.data.refreshTokenHash;
 
-      const storedHash =
-        updateCall.data.refreshTokenHash;
-
-      expect(storedHash).not.toBe(
-        'refresh-token-123',
-      );
-
+      expect(storedHash).not.toBe('refresh-token-123');
       expect(
-        await argon2.verify(
-          storedHash,
-          'refresh-token-123',
-        ),
+        await argon2.verify(storedHash, 'refresh-token-123'),
       ).toBe(true);
     });
 
     it('should throw if the user does not exist', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue(
-        null,
-      );
+      mockPrisma.user.findUnique.mockResolvedValue(null);
 
       await expect(
         service.login({
@@ -375,25 +293,15 @@ describe('AuthService', () => {
           password: 'password123',
         }),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid credentials',
-        ),
+        new UnauthorizedException('Invalid credentials'),
       );
 
-      expect(
-        mockJwtService.signAsync,
-      ).not.toHaveBeenCalled();
-
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('should throw if the password is incorrect', async () => {
-      const passwordHash =
-        await argon2.hash(
-          'correct-password',
-        );
+      const passwordHash = await argon2.hash('correct-password');
 
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'user-123',
@@ -408,32 +316,16 @@ describe('AuthService', () => {
           password: 'wrong-password',
         }),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid credentials',
-        ),
+        new UnauthorizedException('Invalid credentials'),
       );
 
-      expect(
-        mockJwtService.signAsync,
-      ).not.toHaveBeenCalled();
-
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 
-  // =========================
-  // REFRESH
-  // =========================
-
   describe('refresh', () => {
     it('should return new access and refresh tokens', async () => {
-      /*
-       * IMPORTANT:
-       * The payload must contain type: 'refresh'
-       * because the real service validates it.
-       */
       mockJwtService.verifyAsync.mockResolvedValue({
         sub: 'user-123',
         email: 'doctor@test.com',
@@ -442,10 +334,7 @@ describe('AuthService', () => {
         jti: 'refresh-jti-123',
       });
 
-      const storedHash =
-        await argon2.hash(
-          'refresh-token-123',
-        );
+      const storedHash = await argon2.hash('refresh-token-123');
 
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'user-123',
@@ -455,49 +344,33 @@ describe('AuthService', () => {
       });
 
       mockJwtService.signAsync
-        .mockResolvedValueOnce(
-          'new-access-token',
-        )
-        .mockResolvedValueOnce(
-          'new-refresh-token',
-        );
+        .mockResolvedValueOnce('new-access-token')
+        .mockResolvedValueOnce('new-refresh-token');
 
       mockPrisma.user.update.mockResolvedValue({
         id: 'user-123',
-        refreshTokenHash:
-          'new-hash',
+        refreshTokenHash: 'new-hash',
       });
 
-      const result =
-        await service.refresh(
-          'refresh-token-123',
-        );
+      const result = await service.refresh('refresh-token-123');
 
-      expect(
-        mockJwtService.verifyAsync,
-      ).toHaveBeenCalledWith(
+      expect(mockJwtService.verifyAsync).toHaveBeenCalledWith(
         'refresh-token-123',
       );
 
-      expect(
-        mockJwtService.signAsync,
-      ).toHaveBeenCalledTimes(2);
+      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(2);
 
       expect(result).toEqual({
         accessToken: 'new-access-token',
         refreshToken: 'new-refresh-token',
       });
 
-      expect(
-        mockPrisma.user.update,
-      ).toHaveBeenCalledWith({
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: {
           id: 'user-123',
         },
-
         data: {
-          refreshTokenHash:
-            expect.any(String),
+          refreshTokenHash: expect.any(String),
         },
       });
     });
@@ -514,18 +387,11 @@ describe('AuthService', () => {
       await expect(
         service.refresh('access-token'),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid refresh token',
-        ),
+        new UnauthorizedException('Invalid refresh token'),
       );
 
-      expect(
-        mockPrisma.user.findUnique,
-      ).not.toHaveBeenCalled();
-
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('should reject an invalid refresh token', async () => {
@@ -534,22 +400,13 @@ describe('AuthService', () => {
       );
 
       await expect(
-        service.refresh(
-          'invalid-refresh-token',
-        ),
+        service.refresh('invalid-refresh-token'),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid refresh token',
-        ),
+        new UnauthorizedException('Invalid refresh token'),
       );
 
-      expect(
-        mockPrisma.user.findUnique,
-      ).not.toHaveBeenCalled();
-
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('should reject a refresh token that is not stored for the user', async () => {
@@ -569,18 +426,12 @@ describe('AuthService', () => {
       });
 
       await expect(
-        service.refresh(
-          'refresh-token-123',
-        ),
+        service.refresh('refresh-token-123'),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid refresh token',
-        ),
+        new UnauthorizedException('Invalid refresh token'),
       );
 
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
     it('should reject a refresh token with an invalid hash', async () => {
@@ -592,38 +443,26 @@ describe('AuthService', () => {
         jti: 'refresh-jti-123',
       });
 
-      const differentTokenHash =
-        await argon2.hash(
-          'different-refresh-token',
-        );
+      const differentTokenHash = await argon2.hash(
+        'different-refresh-token',
+      );
 
       mockPrisma.user.findUnique.mockResolvedValue({
         id: 'user-123',
         email: 'doctor@test.com',
         role: 'DOCTOR',
-        refreshTokenHash:
-          differentTokenHash,
+        refreshTokenHash: differentTokenHash,
       });
 
       await expect(
-        service.refresh(
-          'refresh-token-123',
-        ),
+        service.refresh('refresh-token-123'),
       ).rejects.toThrow(
-        new UnauthorizedException(
-          'Invalid refresh token',
-        ),
+        new UnauthorizedException('Invalid refresh token'),
       );
 
-      expect(
-        mockPrisma.user.update,
-      ).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
-
-  // =========================
-  // LOGOUT
-  // =========================
 
   describe('logout', () => {
     it('should remove the refresh token hash', async () => {
@@ -632,16 +471,12 @@ describe('AuthService', () => {
         refreshTokenHash: null,
       });
 
-      const result =
-        await service.logout('user-123');
+      const result = await service.logout('user-123');
 
-      expect(
-        mockPrisma.user.update,
-      ).toHaveBeenCalledWith({
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: {
           id: 'user-123',
         },
-
         data: {
           refreshTokenHash: null,
         },
