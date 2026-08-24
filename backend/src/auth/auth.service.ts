@@ -6,6 +6,7 @@ import {
 
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+import { randomUUID } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
@@ -19,11 +20,12 @@ export class AuthService {
     ) { }
 
     async register(dto: RegisterDto) {
-        const existingUser = await this.prisma.user.findUnique({
-            where: {
-                email: dto.email,
-            },
-        });
+        const existingUser =
+            await this.prisma.user.findUnique({
+                where: {
+                    email: dto.email,
+                },
+            });
 
         if (existingUser) {
             throw new ConflictException(
@@ -31,27 +33,29 @@ export class AuthService {
             );
         }
 
-        const passwordHash = await argon2.hash(dto.password);
+        const passwordHash =
+            await argon2.hash(dto.password);
 
-        const user = await this.prisma.user.create({
-            data: {
-                email: dto.email,
-                passwordHash,
+        const user =
+            await this.prisma.user.create({
+                data: {
+                    email: dto.email,
+                    passwordHash,
 
-                doctorProfile: {
-                    create: {
-                        firstName: dto.firstName,
-                        lastName: dto.lastName,
-                        phone: dto.phone,
-                        specialty: dto.specialty,
+                    doctorProfile: {
+                        create: {
+                            firstName: dto.firstName,
+                            lastName: dto.lastName,
+                            phone: dto.phone,
+                            specialty: dto.specialty,
+                        },
                     },
                 },
-            },
 
-            include: {
-                doctorProfile: true,
-            },
-        });
+                include: {
+                    doctorProfile: true,
+                },
+            });
 
         return {
             id: user.id,
@@ -62,11 +66,12 @@ export class AuthService {
     }
 
     async login(dto: LoginDto) {
-        const user = await this.prisma.user.findUnique({
-            where: {
-                email: dto.email,
-            },
-        });
+        const user =
+            await this.prisma.user.findUnique({
+                where: {
+                    email: dto.email,
+                },
+            });
 
         if (!user) {
             throw new UnauthorizedException(
@@ -74,10 +79,11 @@ export class AuthService {
             );
         }
 
-        const passwordValid = await argon2.verify(
-            user.passwordHash,
-            dto.password,
-        );
+        const passwordValid =
+            await argon2.verify(
+                user.passwordHash,
+                dto.password,
+            );
 
         if (!passwordValid) {
             throw new UnauthorizedException(
@@ -97,30 +103,71 @@ export class AuthService {
         email: string,
         role: string,
     ) {
-        const payload = {
-            sub: userId,
-            email,
-            role,
-        };
-
-        // Access token
+        /*
+         * =========================
+         * ACCESS TOKEN
+         * =========================
+         *
+         * Every access token receives
+         * its own unique JTI.
+         *
+         * This guarantees that two tokens
+         * generated in the same second are
+         * still different.
+         */
         const accessToken =
-            await this.jwtService.signAsync(payload);
+            await this.jwtService.signAsync(
+                {
+                    sub: userId,
+                    email,
+                    role,
+                    type: 'access',
+                    jti: randomUUID(),
+                },
+                {
+                    expiresIn: '1h',
+                },
+            );
 
-        // Refresh token
+        /*
+         * =========================
+         * REFRESH TOKEN
+         * =========================
+         *
+         * Every refresh token also receives
+         * a unique JTI.
+         */
         const refreshToken =
             await this.jwtService.signAsync(
-                payload,
+                {
+                    sub: userId,
+                    email,
+                    role,
+                    type: 'refresh',
+                    jti: randomUUID(),
+                },
                 {
                     expiresIn: '7d',
                 },
             );
 
-        // NEVER store the refresh token itself.
-        // Store only its Argon2 hash.
+        /*
+         * NEVER store the raw refresh token.
+         *
+         * Only its Argon2 hash is stored.
+         */
         const refreshTokenHash =
             await argon2.hash(refreshToken);
 
+        /*
+         * Store the new refresh token hash.
+         *
+         * This is what implements refresh-token
+         * rotation.
+         *
+         * Once this update succeeds, the previous
+         * refresh token is no longer valid.
+         */
         await this.prisma.user.update({
             where: {
                 id: userId,
@@ -139,13 +186,37 @@ export class AuthService {
 
     async refresh(refreshToken: string) {
         try {
+            /*
+             * =========================
+             * 1. VERIFY JWT
+             * =========================
+             */
             const payload =
                 await this.jwtService.verifyAsync<{
                     sub: string;
                     email: string;
                     role: string;
+                    type: string;
+                    jti: string;
                 }>(refreshToken);
 
+            /*
+             * =========================
+             * 2. MAKE SURE IT IS A
+             *    REFRESH TOKEN
+             * =========================
+             */
+            if (payload.type !== 'refresh') {
+                throw new UnauthorizedException(
+                    'Invalid refresh token',
+                );
+            }
+
+            /*
+             * =========================
+             * 3. FIND USER
+             * =========================
+             */
             const user =
                 await this.prisma.user.findUnique({
                     where: {
@@ -153,12 +224,21 @@ export class AuthService {
                     },
                 });
 
-            if (!user || !user.refreshTokenHash) {
+            if (
+                !user ||
+                !user.refreshTokenHash
+            ) {
                 throw new UnauthorizedException(
                     'Invalid refresh token',
                 );
             }
 
+            /*
+             * =========================
+             * 4. COMPARE TOKEN AGAINST
+             *    STORED HASH
+             * =========================
+             */
             const tokenValid =
                 await argon2.verify(
                     user.refreshTokenHash,
@@ -171,10 +251,21 @@ export class AuthService {
                 );
             }
 
-            // Token rotation:
-            // the old refresh token becomes invalid
-            // because a new hash is stored.
-            return this.generateTokens(
+            /*
+             * =========================
+             * 5. ROTATE TOKENS
+             * =========================
+             *
+             * generateTokens() creates:
+             *
+             * - new access token
+             * - new refresh token
+             * - new refresh token hash
+             *
+             * The old refresh token therefore
+             * becomes invalid.
+             */
+            return await this.generateTokens(
                 user.id,
                 user.email,
                 user.role,

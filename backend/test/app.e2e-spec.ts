@@ -14,7 +14,11 @@ describe('Reservations E2E', () => {
   let prisma: PrismaService;
 
   let email: string;
+
   let accessToken: string;
+  let refreshToken: string;
+
+  let oldRefreshToken: string;
 
   let roomId: string;
   let reservationId: string;
@@ -56,7 +60,6 @@ describe('Reservations E2E', () => {
   });
 
   afterAll(async () => {
-    // Delete patient created during E2E
     if (patientId) {
       await prisma.patient.delete({
         where: {
@@ -65,7 +68,6 @@ describe('Reservations E2E', () => {
       });
     }
 
-    // Delete payment associated with reservation
     if (reservationId) {
       await prisma.payment.deleteMany({
         where: {
@@ -80,7 +82,6 @@ describe('Reservations E2E', () => {
       });
     }
 
-    // Delete test room
     if (roomId) {
       await prisma.room.delete({
         where: {
@@ -93,7 +94,7 @@ describe('Reservations E2E', () => {
   });
 
   // =========================
-  // AUTH
+  // AUTH - REGISTER
   // =========================
 
   it('should register a new doctor', async () => {
@@ -114,15 +115,21 @@ describe('Reservations E2E', () => {
     expect(response.body.role).toBe('DOCTOR');
 
     expect(response.body.doctorProfile).toBeDefined();
-    expect(response.body.doctorProfile.firstName).toBe(
-      'E2E',
-    );
-    expect(response.body.doctorProfile.lastName).toBe(
-      'Doctor',
-    );
+
+    expect(
+      response.body.doctorProfile.firstName,
+    ).toBe('E2E');
+
+    expect(
+      response.body.doctorProfile.lastName,
+    ).toBe('Doctor');
   });
 
-  it('should login and return an access token', async () => {
+  // =========================
+  // AUTH - LOGIN
+  // =========================
+
+  it('should login and return access and refresh tokens', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -131,13 +138,89 @@ describe('Reservations E2E', () => {
       })
       .expect(201);
 
-    expect(response.body).toHaveProperty('accessToken');
-    expect(typeof response.body.accessToken).toBe('string');
-    expect(response.body.accessToken.length).toBeGreaterThan(
-      0,
+    expect(response.body).toHaveProperty(
+      'accessToken',
+    );
+
+    expect(response.body).toHaveProperty(
+      'refreshToken',
+    );
+
+    expect(
+      typeof response.body.accessToken,
+    ).toBe('string');
+
+    expect(
+      typeof response.body.refreshToken,
+    ).toBe('string');
+
+    expect(
+      response.body.accessToken.length,
+    ).toBeGreaterThan(0);
+
+    expect(
+      response.body.refreshToken.length,
+    ).toBeGreaterThan(0);
+
+    accessToken = response.body.accessToken;
+    refreshToken = response.body.refreshToken;
+  });
+
+  // =========================
+  // AUTH - REFRESH
+  // =========================
+
+  it('should refresh the tokens', async () => {
+    oldRefreshToken = refreshToken;
+
+    const response = await request(
+      app.getHttpServer(),
+    )
+      .post('/auth/refresh')
+      .send({
+        refreshToken,
+      })
+      .expect(201);
+
+    expect(response.body).toHaveProperty(
+      'accessToken',
+    );
+
+    expect(response.body).toHaveProperty(
+      'refreshToken',
+    );
+
+    expect(
+      typeof response.body.accessToken,
+    ).toBe('string');
+
+    expect(
+      typeof response.body.refreshToken,
+    ).toBe('string');
+
+    expect(response.body.accessToken).not.toBe(
+      accessToken,
+    );
+
+    expect(response.body.refreshToken).not.toBe(
+      refreshToken,
     );
 
     accessToken = response.body.accessToken;
+    refreshToken = response.body.refreshToken;
+  });
+
+  // =========================
+  // AUTH - REFRESH TOKEN ROTATION
+  // =========================
+
+  it('should reject the old refresh token after rotation', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken: oldRefreshToken,
+      })
+      .expect(401);
   });
 
   // =========================
@@ -152,7 +235,8 @@ describe('Reservations E2E', () => {
     expect(Array.isArray(response.body)).toBe(true);
 
     const room = response.body.find(
-      (room: { id: string }) => room.id === roomId,
+      (room: { id: string }) =>
+        room.id === roomId,
     );
 
     expect(room).toBeDefined();
@@ -163,7 +247,9 @@ describe('Reservations E2E', () => {
   // =========================
 
   it('should create a reservation', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .post('/reservations')
       .set(
         'Authorization',
@@ -171,8 +257,10 @@ describe('Reservations E2E', () => {
       )
       .send({
         roomId,
-        startTime: '2030-01-10T10:00:00.000Z',
-        endTime: '2030-01-10T12:00:00.000Z',
+        startTime:
+          '2030-01-10T10:00:00.000Z',
+        endTime:
+          '2030-01-10T12:00:00.000Z',
       })
       .expect(201);
 
@@ -185,7 +273,9 @@ describe('Reservations E2E', () => {
   });
 
   it('should return the doctor reservations', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .get('/reservations')
       .set(
         'Authorization',
@@ -205,7 +295,9 @@ describe('Reservations E2E', () => {
   });
 
   it('should return a single reservation', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .get(`/reservations/${reservationId}`)
       .set(
         'Authorization',
@@ -213,13 +305,18 @@ describe('Reservations E2E', () => {
       )
       .expect(200);
 
-    expect(response.body.id).toBe(reservationId);
+    expect(response.body.id).toBe(
+      reservationId,
+    );
+
     expect(response.body.roomId).toBe(roomId);
     expect(response.body.status).toBe('PENDING');
   });
 
   it('should cancel the reservation', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .patch(
         `/reservations/${reservationId}/cancel`,
       )
@@ -229,8 +326,13 @@ describe('Reservations E2E', () => {
       )
       .expect(200);
 
-    expect(response.body.id).toBe(reservationId);
-    expect(response.body.status).toBe('CANCELLED');
+    expect(response.body.id).toBe(
+      reservationId,
+    );
+
+    expect(response.body.status).toBe(
+      'CANCELLED',
+    );
   });
 
   // =========================
@@ -238,7 +340,9 @@ describe('Reservations E2E', () => {
   // =========================
 
   it('should create a patient', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .post('/patients')
       .set(
         'Authorization',
@@ -256,7 +360,10 @@ describe('Reservations E2E', () => {
     expect(response.body).toHaveProperty('id');
     expect(response.body.firstName).toBe('John');
     expect(response.body.lastName).toBe('Doe');
-    expect(response.body.phone).toBe('4421234567');
+    expect(response.body.phone).toBe(
+      '4421234567',
+    );
+
     expect(response.body.email).toBe(
       'john.e2e@test.com',
     );
@@ -265,7 +372,9 @@ describe('Reservations E2E', () => {
   });
 
   it('should return the doctor patients', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .get('/patients')
       .set(
         'Authorization',
@@ -286,7 +395,9 @@ describe('Reservations E2E', () => {
   });
 
   it('should return a single patient', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .get(`/patients/${patientId}`)
       .set(
         'Authorization',
@@ -295,12 +406,19 @@ describe('Reservations E2E', () => {
       .expect(200);
 
     expect(response.body.id).toBe(patientId);
-    expect(response.body.firstName).toBe('John');
-    expect(response.body.lastName).toBe('Doe');
+    expect(response.body.firstName).toBe(
+      'John',
+    );
+
+    expect(response.body.lastName).toBe(
+      'Doe',
+    );
   });
 
   it('should update the patient', async () => {
-    const response = await request(app.getHttpServer())
+    const response = await request(
+      app.getHttpServer(),
+    )
       .patch(`/patients/${patientId}`)
       .set(
         'Authorization',
@@ -313,11 +431,46 @@ describe('Reservations E2E', () => {
       .expect(200);
 
     expect(response.body.id).toBe(patientId);
+
     expect(response.body.firstName).toBe(
       'Jonathan',
     );
+
     expect(response.body.phone).toBe(
       '4429876543',
     );
+  });
+
+  // =========================
+  // AUTH - LOGOUT
+  // =========================
+
+  it('should logout successfully', async () => {
+    const response = await request(
+      app.getHttpServer(),
+    )
+      .post('/auth/logout')
+      .set(
+        'Authorization',
+        `Bearer ${accessToken}`,
+      )
+      .expect(201);
+
+    expect(response.body).toEqual({
+      message: 'Logged out successfully',
+    });
+  });
+
+  // =========================
+  // AUTH - REFRESH AFTER LOGOUT
+  // =========================
+
+  it('should reject the refresh token after logout', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken,
+      })
+      .expect(401);
   });
 });

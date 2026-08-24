@@ -51,6 +51,10 @@ describe('AuthService', () => {
       module.get<AuthService>(AuthService);
   });
 
+  // =========================
+  // REGISTER
+  // =========================
+
   describe('register', () => {
     it('should register a new user and create a doctor profile', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
@@ -198,6 +202,10 @@ describe('AuthService', () => {
     });
   });
 
+  // =========================
+  // LOGIN
+  // =========================
+
   describe('login', () => {
     it('should login with valid credentials and return access and refresh tokens', async () => {
       const passwordHash =
@@ -244,26 +252,39 @@ describe('AuthService', () => {
         mockJwtService.signAsync,
       ).toHaveBeenCalledTimes(2);
 
-      const expectedPayload = {
-        sub: 'user-123',
-        email: 'doctor@test.com',
-        role: 'DOCTOR',
-      };
-
-      // Access token
+      /*
+       * ACCESS TOKEN
+       */
       expect(
         mockJwtService.signAsync,
       ).toHaveBeenNthCalledWith(
         1,
-        expectedPayload,
+        expect.objectContaining({
+          sub: 'user-123',
+          email: 'doctor@test.com',
+          role: 'DOCTOR',
+          type: 'access',
+          jti: expect.any(String),
+        }),
+        {
+          expiresIn: '1h',
+        },
       );
 
-      // Refresh token
+      /*
+       * REFRESH TOKEN
+       */
       expect(
         mockJwtService.signAsync,
       ).toHaveBeenNthCalledWith(
         2,
-        expectedPayload,
+        expect.objectContaining({
+          sub: 'user-123',
+          email: 'doctor@test.com',
+          role: 'DOCTOR',
+          type: 'refresh',
+          jti: expect.any(String),
+        }),
         {
           expiresIn: '7d',
         },
@@ -348,13 +369,11 @@ describe('AuthService', () => {
         null,
       );
 
-      const dto = {
-        email: 'unknown@test.com',
-        password: 'password123',
-      };
-
       await expect(
-        service.login(dto),
+        service.login({
+          email: 'unknown@test.com',
+          password: 'password123',
+        }),
       ).rejects.toThrow(
         new UnauthorizedException(
           'Invalid credentials',
@@ -383,13 +402,11 @@ describe('AuthService', () => {
         role: 'DOCTOR',
       });
 
-      const dto = {
-        email: 'doctor@test.com',
-        password: 'wrong-password',
-      };
-
       await expect(
-        service.login(dto),
+        service.login({
+          email: 'doctor@test.com',
+          password: 'wrong-password',
+        }),
       ).rejects.toThrow(
         new UnauthorizedException(
           'Invalid credentials',
@@ -406,12 +423,23 @@ describe('AuthService', () => {
     });
   });
 
+  // =========================
+  // REFRESH
+  // =========================
+
   describe('refresh', () => {
     it('should return new access and refresh tokens', async () => {
+      /*
+       * IMPORTANT:
+       * The payload must contain type: 'refresh'
+       * because the real service validates it.
+       */
       mockJwtService.verifyAsync.mockResolvedValue({
         sub: 'user-123',
         email: 'doctor@test.com',
         role: 'DOCTOR',
+        type: 'refresh',
+        jti: 'refresh-jti-123',
       });
 
       const storedHash =
@@ -451,6 +479,10 @@ describe('AuthService', () => {
         'refresh-token-123',
       );
 
+      expect(
+        mockJwtService.signAsync,
+      ).toHaveBeenCalledTimes(2);
+
       expect(result).toEqual({
         accessToken: 'new-access-token',
         refreshToken: 'new-refresh-token',
@@ -468,6 +500,32 @@ describe('AuthService', () => {
             expect.any(String),
         },
       });
+    });
+
+    it('should reject an access token used as refresh token', async () => {
+      mockJwtService.verifyAsync.mockResolvedValue({
+        sub: 'user-123',
+        email: 'doctor@test.com',
+        role: 'DOCTOR',
+        type: 'access',
+        jti: 'access-jti-123',
+      });
+
+      await expect(
+        service.refresh('access-token'),
+      ).rejects.toThrow(
+        new UnauthorizedException(
+          'Invalid refresh token',
+        ),
+      );
+
+      expect(
+        mockPrisma.user.findUnique,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrisma.user.update,
+      ).not.toHaveBeenCalled();
     });
 
     it('should reject an invalid refresh token', async () => {
@@ -499,6 +557,8 @@ describe('AuthService', () => {
         sub: 'user-123',
         email: 'doctor@test.com',
         role: 'DOCTOR',
+        type: 'refresh',
+        jti: 'refresh-jti-123',
       });
 
       mockPrisma.user.findUnique.mockResolvedValue({
@@ -528,6 +588,8 @@ describe('AuthService', () => {
         sub: 'user-123',
         email: 'doctor@test.com',
         role: 'DOCTOR',
+        type: 'refresh',
+        jti: 'refresh-jti-123',
       });
 
       const differentTokenHash =
@@ -558,6 +620,10 @@ describe('AuthService', () => {
       ).not.toHaveBeenCalled();
     });
   });
+
+  // =========================
+  // LOGOUT
+  // =========================
 
   describe('logout', () => {
     it('should remove the refresh token hash', async () => {
