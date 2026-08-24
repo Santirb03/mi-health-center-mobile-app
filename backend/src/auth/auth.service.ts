@@ -6,6 +6,7 @@ import {
 
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -14,7 +15,7 @@ import { LoginDto } from './dto/login.dto';
 export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
-        private readonly jwtService: JwtService
+        private readonly jwtService: JwtService,
     ) { }
 
     async register(dto: RegisterDto) {
@@ -25,7 +26,9 @@ export class AuthService {
         });
 
         if (existingUser) {
-            throw new ConflictException('Email already registered');
+            throw new ConflictException(
+                'Email already registered',
+            );
         }
 
         const passwordHash = await argon2.hash(dto.password);
@@ -34,6 +37,7 @@ export class AuthService {
             data: {
                 email: dto.email,
                 passwordHash,
+
                 doctorProfile: {
                     create: {
                         firstName: dto.firstName,
@@ -43,6 +47,7 @@ export class AuthService {
                     },
                 },
             },
+
             include: {
                 doctorProfile: true,
             },
@@ -55,6 +60,7 @@ export class AuthService {
             doctorProfile: user.doctorProfile,
         };
     }
+
     async login(dto: LoginDto) {
         const user = await this.prisma.user.findUnique({
             where: {
@@ -63,7 +69,9 @@ export class AuthService {
         });
 
         if (!user) {
-            throw new UnauthorizedException('Invalid credentials');
+            throw new UnauthorizedException(
+                'Invalid credentials',
+            );
         }
 
         const passwordValid = await argon2.verify(
@@ -72,17 +80,125 @@ export class AuthService {
         );
 
         if (!passwordValid) {
-            throw new UnauthorizedException('Invalid credentials');
+            throw new UnauthorizedException(
+                'Invalid credentials',
+            );
         }
 
-        const accessToken = await this.jwtService.signAsync({
-            sub: user.id,
-            email: user.email,
-            role: user.role,
+        return this.generateTokens(
+            user.id,
+            user.email,
+            user.role,
+        );
+    }
+
+    private async generateTokens(
+        userId: string,
+        email: string,
+        role: string,
+    ) {
+        const payload = {
+            sub: userId,
+            email,
+            role,
+        };
+
+        // Access token
+        const accessToken =
+            await this.jwtService.signAsync(payload);
+
+        // Refresh token
+        const refreshToken =
+            await this.jwtService.signAsync(
+                payload,
+                {
+                    expiresIn: '7d',
+                },
+            );
+
+        // NEVER store the refresh token itself.
+        // Store only its Argon2 hash.
+        const refreshTokenHash =
+            await argon2.hash(refreshToken);
+
+        await this.prisma.user.update({
+            where: {
+                id: userId,
+            },
+
+            data: {
+                refreshTokenHash,
+            },
         });
 
         return {
             accessToken,
+            refreshToken,
+        };
+    }
+
+    async refresh(refreshToken: string) {
+        try {
+            const payload =
+                await this.jwtService.verifyAsync<{
+                    sub: string;
+                    email: string;
+                    role: string;
+                }>(refreshToken);
+
+            const user =
+                await this.prisma.user.findUnique({
+                    where: {
+                        id: payload.sub,
+                    },
+                });
+
+            if (!user || !user.refreshTokenHash) {
+                throw new UnauthorizedException(
+                    'Invalid refresh token',
+                );
+            }
+
+            const tokenValid =
+                await argon2.verify(
+                    user.refreshTokenHash,
+                    refreshToken,
+                );
+
+            if (!tokenValid) {
+                throw new UnauthorizedException(
+                    'Invalid refresh token',
+                );
+            }
+
+            // Token rotation:
+            // the old refresh token becomes invalid
+            // because a new hash is stored.
+            return this.generateTokens(
+                user.id,
+                user.email,
+                user.role,
+            );
+        } catch {
+            throw new UnauthorizedException(
+                'Invalid refresh token',
+            );
+        }
+    }
+
+    async logout(userId: string) {
+        await this.prisma.user.update({
+            where: {
+                id: userId,
+            },
+
+            data: {
+                refreshTokenHash: null,
+            },
+        });
+
+        return {
+            message: 'Logged out successfully',
         };
     }
 }
