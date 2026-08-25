@@ -1,4 +1,5 @@
 import { api } from './api';
+import { saveTokens } from './storage';
 
 export interface LoginResponse {
     accessToken: string;
@@ -17,6 +18,10 @@ export async function login(
         '/auth/login',
         data,
     );
+
+    const { accessToken, refreshToken } = response.data;
+
+    await saveTokens(accessToken, refreshToken);
 
     return response.data;
 }
