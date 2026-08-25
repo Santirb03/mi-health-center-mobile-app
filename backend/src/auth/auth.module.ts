@@ -31,7 +31,7 @@ import { AuthService } from './auth.service';
           ),
 
         signOptions: {
-          expiresIn: '1h',
+          expiresIn: '15m',
         },
       }),
     }),

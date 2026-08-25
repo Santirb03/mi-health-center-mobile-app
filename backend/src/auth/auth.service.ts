@@ -98,7 +98,7 @@ export class AuthService {
                 jti: randomUUID(),
             },
             {
-                expiresIn: '1h',
+                expiresIn: '15m',
             },
         );
 
@@ -111,7 +111,7 @@ export class AuthService {
                 jti: randomUUID(),
             },
             {
-                expiresIn: '7d',
+                expiresIn: '14d',
             },
         );
 
