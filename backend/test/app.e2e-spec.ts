@@ -9,6 +9,8 @@ import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 
+jest.setTimeout(30000);
+
 describe('Backend E2E', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;

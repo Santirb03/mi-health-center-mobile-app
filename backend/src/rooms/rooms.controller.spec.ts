@@ -12,6 +12,7 @@ describe('RoomsController', () => {
   const mockRoomsService = {
     findAll: jest.fn(),
     findOne: jest.fn(),
+    getAvailability: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
     remove: jest.fn(),
@@ -27,7 +28,8 @@ describe('RoomsController', () => {
         ],
         providers: [
           {
-            provide: RoomsService,
+            provide:
+              RoomsService,
             useValue:
               mockRoomsService,
           },
@@ -55,9 +57,11 @@ describe('RoomsController', () => {
         },
       ];
 
-      mockRoomsService.findAll.mockResolvedValue(
-        expectedResult,
-      );
+      mockRoomsService
+        .findAll
+        .mockResolvedValue(
+          expectedResult,
+        );
 
       const result =
         await controller.findAll();
@@ -80,9 +84,11 @@ describe('RoomsController', () => {
         pricePerHour: 350,
       };
 
-      mockRoomsService.findOne.mockResolvedValue(
-        expectedResult,
-      );
+      mockRoomsService
+        .findOne
+        .mockResolvedValue(
+          expectedResult,
+        );
 
       const result =
         await controller.findOne(
@@ -93,6 +99,51 @@ describe('RoomsController', () => {
         mockRoomsService.findOne,
       ).toHaveBeenCalledWith(
         'room-123',
+      );
+
+      expect(result).toEqual(
+        expectedResult,
+      );
+    });
+  });
+
+  describe('getAvailability', () => {
+    it('should return room availability for a date', async () => {
+      const expectedResult = {
+        roomId: 'room-123',
+        roomName: 'Room A',
+        date: '2026-09-01',
+        timeZone:
+          'America/Mexico_City',
+        opensAt: '08:00',
+        closesAt: '21:00',
+        slots: [
+          {
+            startTime: '08:00',
+            endTime: '09:00',
+            available: true,
+          },
+        ],
+      };
+
+      mockRoomsService
+        .getAvailability
+        .mockResolvedValue(
+          expectedResult,
+        );
+
+      const result =
+        await controller.getAvailability(
+          'room-123',
+          '2026-09-01',
+        );
+
+      expect(
+        mockRoomsService
+          .getAvailability,
+      ).toHaveBeenCalledWith(
+        'room-123',
+        '2026-09-01',
       );
 
       expect(result).toEqual(
@@ -115,16 +166,22 @@ describe('RoomsController', () => {
         ...dto,
       };
 
-      mockRoomsService.create.mockResolvedValue(
-        expectedResult,
-      );
+      mockRoomsService
+        .create
+        .mockResolvedValue(
+          expectedResult,
+        );
 
       const result =
-        await controller.create(dto);
+        await controller.create(
+          dto,
+        );
 
       expect(
         mockRoomsService.create,
-      ).toHaveBeenCalledWith(dto);
+      ).toHaveBeenCalledWith(
+        dto,
+      );
 
       expect(result).toEqual(
         expectedResult,
@@ -148,9 +205,11 @@ describe('RoomsController', () => {
         active: true,
       };
 
-      mockRoomsService.update.mockResolvedValue(
-        expectedResult,
-      );
+      mockRoomsService
+        .update
+        .mockResolvedValue(
+          expectedResult,
+        );
 
       const result =
         await controller.update(
@@ -180,9 +239,11 @@ describe('RoomsController', () => {
         active: false,
       };
 
-      mockRoomsService.remove.mockResolvedValue(
-        expectedResult,
-      );
+      mockRoomsService
+        .remove
+        .mockResolvedValue(
+          expectedResult,
+        );
 
       const result =
         await controller.remove(

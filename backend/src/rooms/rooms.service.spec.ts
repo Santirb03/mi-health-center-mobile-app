@@ -1,9 +1,12 @@
 import {
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
+
+import {
   Test,
   TestingModule,
 } from '@nestjs/testing';
-
-import { NotFoundException } from '@nestjs/common';
 
 import { RoomsService } from './rooms.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +21,9 @@ describe('RoomsService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    reservation: {
+      findMany: jest.fn(),
+    },
   };
 
   beforeEach(async () => {
@@ -28,7 +34,8 @@ describe('RoomsService', () => {
         providers: [
           RoomsService,
           {
-            provide: PrismaService,
+            provide:
+              PrismaService,
             useValue:
               mockPrismaService,
           },
@@ -55,15 +62,20 @@ describe('RoomsService', () => {
         },
       ];
 
-      mockPrismaService.room.findMany.mockResolvedValue(
-        rooms,
-      );
+      mockPrismaService
+        .room
+        .findMany
+        .mockResolvedValue(
+          rooms,
+        );
 
       const result =
         await service.findAll();
 
       expect(
-        mockPrismaService.room.findMany,
+        mockPrismaService
+          .room
+          .findMany,
       ).toHaveBeenCalledWith({
         where: {
           active: true,
@@ -73,7 +85,9 @@ describe('RoomsService', () => {
         },
       });
 
-      expect(result).toEqual(rooms);
+      expect(result).toEqual(
+        rooms,
+      );
     });
   });
 
@@ -85,9 +99,12 @@ describe('RoomsService', () => {
         pricePerHour: 350,
       };
 
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        room,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          room,
+        );
 
       const result =
         await service.findOne(
@@ -95,28 +112,294 @@ describe('RoomsService', () => {
         );
 
       expect(
-        mockPrismaService.room.findUnique,
+        mockPrismaService
+          .room
+          .findUnique,
       ).toHaveBeenCalledWith({
         where: {
           id: 'room-123',
         },
       });
 
-      expect(result).toEqual(room);
+      expect(result).toEqual(
+        room,
+      );
     });
 
     it('should throw if room does not exist', async () => {
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        null,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          null,
+        );
 
       await expect(
-        service.findOne('room-123'),
+        service.findOne(
+          'room-123',
+        ),
       ).rejects.toThrow(
         new NotFoundException(
           'Room not found',
         ),
       );
+    });
+  });
+
+  describe('getAvailability', () => {
+    it('should return 13 hourly slots from 08:00 to 21:00', async () => {
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue({
+          id: 'room-123',
+          name: 'Room A',
+          active: true,
+        });
+
+      mockPrismaService
+        .reservation
+        .findMany
+        .mockResolvedValue([]);
+
+      const result =
+        await service.getAvailability(
+          'room-123',
+          '2026-09-01',
+        );
+
+      expect(
+        result.slots,
+      ).toHaveLength(13);
+
+      expect(
+        result.slots[0],
+      ).toEqual(
+        expect.objectContaining({
+          startTime: '08:00',
+          endTime: '09:00',
+          available: true,
+        }),
+      );
+
+      expect(
+        result.slots[12],
+      ).toEqual(
+        expect.objectContaining({
+          startTime: '20:00',
+          endTime: '21:00',
+          available: true,
+        }),
+      );
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          roomId: 'room-123',
+          roomName: 'Room A',
+          date: '2026-09-01',
+          timeZone:
+            'America/Mexico_City',
+          opensAt: '08:00',
+          closesAt: '21:00',
+        }),
+      );
+    });
+
+    it('should mark reserved hours as unavailable', async () => {
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue({
+          id: 'room-123',
+          name: 'Room A',
+          active: true,
+        });
+
+      mockPrismaService
+        .reservation
+        .findMany
+        .mockResolvedValue([
+          {
+            startTime:
+              new Date(
+                '2026-09-01T16:00:00.000Z',
+              ),
+            endTime:
+              new Date(
+                '2026-09-01T18:00:00.000Z',
+              ),
+          },
+        ]);
+
+      const result =
+        await service.getAvailability(
+          'room-123',
+          '2026-09-01',
+        );
+
+      const tenAM =
+        result.slots.find(
+          (slot) =>
+            slot.startTime ===
+            '10:00',
+        );
+
+      const elevenAM =
+        result.slots.find(
+          (slot) =>
+            slot.startTime ===
+            '11:00',
+        );
+
+      const noon =
+        result.slots.find(
+          (slot) =>
+            slot.startTime ===
+            '12:00',
+        );
+
+      expect(
+        tenAM?.available,
+      ).toBe(false);
+
+      expect(
+        elevenAM?.available,
+      ).toBe(false);
+
+      expect(
+        noon?.available,
+      ).toBe(true);
+    });
+
+    it('should query only pending and confirmed reservations', async () => {
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue({
+          id: 'room-123',
+          name: 'Room A',
+          active: true,
+        });
+
+      mockPrismaService
+        .reservation
+        .findMany
+        .mockResolvedValue([]);
+
+      await service.getAvailability(
+        'room-123',
+        '2026-09-01',
+      );
+
+      expect(
+        mockPrismaService
+          .reservation
+          .findMany,
+      ).toHaveBeenCalledWith({
+        where: {
+          roomId: 'room-123',
+          status: {
+            in: [
+              'PENDING',
+              'CONFIRMED',
+            ],
+          },
+          startTime: {
+            lt: new Date(
+              '2026-09-02T03:00:00.000Z',
+            ),
+          },
+          endTime: {
+            gt: new Date(
+              '2026-09-01T14:00:00.000Z',
+            ),
+          },
+        },
+        select: {
+          startTime: true,
+          endTime: true,
+        },
+      });
+    });
+
+    it('should reject an invalid date format', async () => {
+      await expect(
+        service.getAvailability(
+          'room-123',
+          '09-01-2026',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Date must use YYYY-MM-DD format',
+        ),
+      );
+
+      expect(
+        mockPrismaService
+          .room
+          .findUnique,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should reject an impossible date', async () => {
+      await expect(
+        service.getAvailability(
+          'room-123',
+          '2026-02-31',
+        ),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Invalid date',
+        ),
+      );
+    });
+
+    it('should throw if room does not exist', async () => {
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          null,
+        );
+
+      await expect(
+        service.getAvailability(
+          'room-123',
+          '2026-09-01',
+        ),
+      ).rejects.toThrow(
+        new NotFoundException(
+          'Room not found',
+        ),
+      );
+    });
+
+    it('should throw if room is inactive', async () => {
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue({
+          id: 'room-123',
+          name: 'Room A',
+          active: false,
+        });
+
+      await expect(
+        service.getAvailability(
+          'room-123',
+          '2026-09-01',
+        ),
+      ).rejects.toThrow(
+        new NotFoundException(
+          'Room not found or inactive',
+        ),
+      );
+
+      expect(
+        mockPrismaService
+          .reservation
+          .findMany,
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -135,15 +418,22 @@ describe('RoomsService', () => {
         active: true,
       };
 
-      mockPrismaService.room.create.mockResolvedValue(
-        room,
-      );
+      mockPrismaService
+        .room
+        .create
+        .mockResolvedValue(
+          room,
+        );
 
       const result =
-        await service.create(dto);
+        await service.create(
+          dto,
+        );
 
       expect(
-        mockPrismaService.room.create,
+        mockPrismaService
+          .room
+          .create,
       ).toHaveBeenCalledWith({
         data: {
           name: dto.name,
@@ -154,7 +444,9 @@ describe('RoomsService', () => {
         },
       });
 
-      expect(result).toEqual(room);
+      expect(result).toEqual(
+        room,
+      );
     });
   });
 
@@ -177,13 +469,19 @@ describe('RoomsService', () => {
         ...dto,
       };
 
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        existingRoom,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          existingRoom,
+        );
 
-      mockPrismaService.room.update.mockResolvedValue(
-        updatedRoom,
-      );
+      mockPrismaService
+        .room
+        .update
+        .mockResolvedValue(
+          updatedRoom,
+        );
 
       const result =
         await service.update(
@@ -192,7 +490,9 @@ describe('RoomsService', () => {
         );
 
       expect(
-        mockPrismaService.room.update,
+        mockPrismaService
+          .room
+          .update,
       ).toHaveBeenCalledWith({
         where: {
           id: 'room-123',
@@ -208,9 +508,12 @@ describe('RoomsService', () => {
     });
 
     it('should throw if room does not exist', async () => {
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        null,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          null,
+        );
 
       await expect(
         service.update(
@@ -226,7 +529,9 @@ describe('RoomsService', () => {
       );
 
       expect(
-        mockPrismaService.room.update,
+        mockPrismaService
+          .room
+          .update,
       ).not.toHaveBeenCalled();
     });
   });
@@ -245,13 +550,19 @@ describe('RoomsService', () => {
         active: false,
       };
 
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        existingRoom,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          existingRoom,
+        );
 
-      mockPrismaService.room.update.mockResolvedValue(
-        deactivatedRoom,
-      );
+      mockPrismaService
+        .room
+        .update
+        .mockResolvedValue(
+          deactivatedRoom,
+        );
 
       const result =
         await service.remove(
@@ -259,7 +570,9 @@ describe('RoomsService', () => {
         );
 
       expect(
-        mockPrismaService.room.update,
+        mockPrismaService
+          .room
+          .update,
       ).toHaveBeenCalledWith({
         where: {
           id: 'room-123',
@@ -275,12 +588,17 @@ describe('RoomsService', () => {
     });
 
     it('should throw if room does not exist', async () => {
-      mockPrismaService.room.findUnique.mockResolvedValue(
-        null,
-      );
+      mockPrismaService
+        .room
+        .findUnique
+        .mockResolvedValue(
+          null,
+        );
 
       await expect(
-        service.remove('room-123'),
+        service.remove(
+          'room-123',
+        ),
       ).rejects.toThrow(
         new NotFoundException(
           'Room not found',
@@ -288,7 +606,9 @@ describe('RoomsService', () => {
       );
 
       expect(
-        mockPrismaService.room.update,
+        mockPrismaService
+          .room
+          .update,
       ).not.toHaveBeenCalled();
     });
   });

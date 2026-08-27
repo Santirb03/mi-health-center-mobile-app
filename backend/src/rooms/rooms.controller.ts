@@ -6,6 +6,7 @@ import {
     Param,
     Patch,
     Post,
+    Query,
     UseGuards,
 } from '@nestjs/common';
 
@@ -27,6 +28,17 @@ export class RoomsController {
     @Get()
     findAll() {
         return this.roomsService.findAll();
+    }
+
+    @Get(':id/availability')
+    getAvailability(
+        @Param('id') id: string,
+        @Query('date') date: string,
+    ) {
+        return this.roomsService.getAvailability(
+            id,
+            date,
+        );
     }
 
     @Get(':id')
