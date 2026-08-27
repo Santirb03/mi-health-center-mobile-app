@@ -212,7 +212,7 @@ describe('AuthService', () => {
           jti: expect.any(String),
         }),
         {
-          expiresIn: '1h',
+          expiresIn: '15m',
         },
       );
 
@@ -226,7 +226,7 @@ describe('AuthService', () => {
           jti: expect.any(String),
         }),
         {
-          expiresIn: '7d',
+          expiresIn: '14d',
         },
       );
 
