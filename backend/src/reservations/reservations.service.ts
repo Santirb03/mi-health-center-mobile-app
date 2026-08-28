@@ -3,7 +3,9 @@ import {
     Injectable,
     NotFoundException,
 } from '@nestjs/common';
+
 import { PrismaService } from '../prisma/prisma.service';
+
 import { CreateReservationDto } from './dto/create-reservation.dto';
 
 const OPENING_HOUR = 8;
@@ -15,9 +17,13 @@ const BUSINESS_TIMEZONE_OFFSET_HOURS = -6;
 
 @Injectable()
 export class ReservationsService {
-    constructor(private readonly prisma: PrismaService) { }
+    constructor(
+        private readonly prisma: PrismaService,
+    ) { }
 
-    private getBusinessLocalDate(date: Date) {
+    private getBusinessLocalDate(
+        date: Date,
+    ) {
         const localDate = new Date(
             date.getTime() +
             BUSINESS_TIMEZONE_OFFSET_HOURS *
@@ -51,11 +57,12 @@ export class ReservationsService {
             );
         }
 
-        const room = await this.prisma.room.findUnique({
-            where: {
-                id: dto.roomId,
-            },
-        });
+        const room =
+            await this.prisma.room.findUnique({
+                where: {
+                    id: dto.roomId,
+                },
+            });
 
         if (!room || !room.active) {
             throw new NotFoundException(
@@ -63,12 +70,19 @@ export class ReservationsService {
             );
         }
 
-        const startTime = new Date(dto.startTime);
-        const endTime = new Date(dto.endTime);
+        const startTime =
+            new Date(dto.startTime);
+
+        const endTime =
+            new Date(dto.endTime);
 
         if (
-            Number.isNaN(startTime.getTime()) ||
-            Number.isNaN(endTime.getTime())
+            Number.isNaN(
+                startTime.getTime(),
+            ) ||
+            Number.isNaN(
+                endTime.getTime(),
+            )
         ) {
             throw new BadRequestException(
                 'Invalid date format',
@@ -81,7 +95,7 @@ export class ReservationsService {
             );
         }
 
-        /*
+        /**
          * We compare absolute timestamps here.
          * If the reservation starts before or at the
          * current instant, it can no longer be booked.
@@ -92,17 +106,19 @@ export class ReservationsService {
             );
         }
 
-        /*
+        /**
          * Reservations must begin and finish exactly
          * on an hourly boundary.
          */
         if (
             startTime.getUTCMinutes() !== 0 ||
             startTime.getUTCSeconds() !== 0 ||
-            startTime.getUTCMilliseconds() !== 0 ||
+            startTime.getUTCMilliseconds() !==
+            0 ||
             endTime.getUTCMinutes() !== 0 ||
             endTime.getUTCSeconds() !== 0 ||
-            endTime.getUTCMilliseconds() !== 0
+            endTime.getUTCMilliseconds() !==
+            0
         ) {
             throw new BadRequestException(
                 'Reservations must start and end on a full hour',
@@ -110,19 +126,26 @@ export class ReservationsService {
         }
 
         const localStart =
-            this.getBusinessLocalDate(startTime);
+            this.getBusinessLocalDate(
+                startTime,
+            );
 
         const localEnd =
-            this.getBusinessLocalDate(endTime);
+            this.getBusinessLocalDate(
+                endTime,
+            );
 
-        /*
+        /**
          * A reservation must start and finish
          * on the same local business day.
          */
         const sameBusinessDay =
-            localStart.year === localEnd.year &&
-            localStart.month === localEnd.month &&
-            localStart.day === localEnd.day;
+            localStart.year ===
+            localEnd.year &&
+            localStart.month ===
+            localEnd.month &&
+            localStart.day ===
+            localEnd.day;
 
         if (!sameBusinessDay) {
             throw new BadRequestException(
@@ -130,7 +153,7 @@ export class ReservationsService {
             );
         }
 
-        /*
+        /**
          * Business hours:
          *
          * Opening: 08:00
@@ -143,15 +166,21 @@ export class ReservationsService {
          * 21:00 -> 22:00 invalid
          */
         if (
-            localStart.hour < OPENING_HOUR ||
-            localStart.hour >= CLOSING_HOUR ||
-            localEnd.hour > CLOSING_HOUR
+            localStart.hour <
+            OPENING_HOUR ||
+            localStart.hour >=
+            CLOSING_HOUR ||
+            localEnd.hour >
+            CLOSING_HOUR
         ) {
             throw new BadRequestException(
                 'Reservations must be within business hours from 08:00 to 21:00',
             );
         }
 
+        /**
+         * Check overlap against active reservations.
+         */
         const conflictingReservation =
             await this.prisma.reservation.findFirst({
                 where: {
@@ -174,6 +203,36 @@ export class ReservationsService {
         if (conflictingReservation) {
             throw new BadRequestException(
                 'Room is already reserved for the selected time',
+            );
+        }
+
+        /**
+         * Check overlap against administrative room blocks.
+         *
+         * Example:
+         *
+         * Block:       14:00 -> 17:00
+         * Reservation  13:00 -> 15:00  ❌
+         * Reservation  16:00 -> 18:00  ❌
+         * Reservation  12:00 -> 14:00  ✅
+         * Reservation  17:00 -> 18:00  ✅
+         */
+        const conflictingBlock =
+            await this.prisma.roomBlock.findFirst({
+                where: {
+                    roomId: dto.roomId,
+                    startTime: {
+                        lt: endTime,
+                    },
+                    endTime: {
+                        gt: startTime,
+                    },
+                },
+            });
+
+        if (conflictingBlock) {
+            throw new BadRequestException(
+                'Room is blocked for the selected time',
             );
         }
 
@@ -200,7 +259,9 @@ export class ReservationsService {
         return reservation;
     }
 
-    async findAll(userId: string) {
+    async findAll(
+        userId: string,
+    ) {
         const doctor =
             await this.prisma.doctorProfile.findUnique({
                 where: {
@@ -296,7 +357,8 @@ export class ReservationsService {
         }
 
         if (
-            reservation.status === 'CANCELLED'
+            reservation.status ===
+            'CANCELLED'
         ) {
             throw new BadRequestException(
                 'Reservation is already cancelled',
@@ -304,7 +366,8 @@ export class ReservationsService {
         }
 
         if (
-            reservation.status === 'COMPLETED'
+            reservation.status ===
+            'COMPLETED'
         ) {
             throw new BadRequestException(
                 'Completed reservations cannot be cancelled',

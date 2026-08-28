@@ -207,14 +207,14 @@ describe('Backend E2E', () => {
       )
       .send({
         roomId,
-        startTime: '2030-01-10T10:00:00.000Z',
-        endTime: '2030-01-10T12:00:00.000Z',
+        startTime: '2030-01-10T14:00:00.000Z',
+        endTime: '2030-01-10T15:00:00.000Z',
       })
       .expect(201);
 
     expect(response.body).toHaveProperty('id');
     expect(response.body.roomId).toBe(roomId);
-    expect(response.body.totalPrice).toBe('1000');
+    expect(response.body.totalPrice).toBe('500');
     expect(response.body.status).toBe('PENDING');
 
     reservationId = response.body.id;
@@ -416,14 +416,14 @@ describe('Backend E2E', () => {
       )
       .send({
         roomId,
-        startTime: '2030-01-11T10:00:00.000Z',
-        endTime: '2030-01-11T12:00:00.000Z',
+        startTime: '2030-01-11T14:00:00.000Z',
+        endTime: '2030-01-11T15:00:00.000Z',
       })
       .expect(201);
 
     expect(response.body).toHaveProperty('id');
     expect(response.body.roomId).toBe(roomId);
-    expect(response.body.totalPrice).toBe('1000');
+    expect(response.body.totalPrice).toBe('500');
     expect(response.body.status).toBe('PENDING');
 
     paymentReservationId = response.body.id;
@@ -527,8 +527,8 @@ describe('Backend E2E', () => {
       )
       .send({
         roomId,
-        startTime: '2030-01-12T10:00:00.000Z',
-        endTime: '2030-01-12T11:00:00.000Z',
+        startTime: '2030-01-12T14:00:00.000Z',
+        endTime: '2030-01-12T15:00:00.000Z',
       })
       .expect(201);
 

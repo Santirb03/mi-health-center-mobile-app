@@ -32,13 +32,13 @@ enum PaymentStatus {
 }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  passwordHash String
+  id               String   @id @default(uuid())
+  email            String   @unique
+  passwordHash     String
   refreshTokenHash String?
-  role         UserRole @default(DOCTOR)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  role             UserRole @default(DOCTOR)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   doctorProfile DoctorProfile?
 
@@ -74,8 +74,25 @@ model Room {
 
   reservations Reservation[]
   appointments Appointment[]
+  blocks       RoomBlock[]
 
   @@map("rooms")
+}
+
+model RoomBlock {
+  id        String   @id @default(uuid())
+  roomId    String
+  startTime DateTime
+  endTime   DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId])
+  @@index([startTime, endTime])
+  @@map("room_blocks")
 }
 
 model Reservation {
@@ -159,6 +176,5 @@ model StripeWebhookEvent {
   id          String   @id
   type        String
   processedAt DateTime @default(now())
-
   createdAt   DateTime @default(now())
 }

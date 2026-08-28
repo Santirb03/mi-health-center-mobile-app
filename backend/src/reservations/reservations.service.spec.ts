@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+
 import { ReservationsService } from './reservations.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -15,14 +16,20 @@ describe('ReservationsService', () => {
     doctorProfile: {
       findUnique: jest.fn(),
     },
+
     room: {
       findUnique: jest.fn(),
     },
+
     reservation: {
       findFirst: jest.fn(),
       create: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+    },
+
+    roomBlock: {
+      findFirst: jest.fn(),
     },
   };
 
@@ -43,9 +50,10 @@ describe('ReservationsService', () => {
         ],
       }).compile();
 
-    service = module.get<ReservationsService>(
-      ReservationsService,
-    );
+    service =
+      module.get<ReservationsService>(
+        ReservationsService,
+      );
   });
 
   afterEach(() => {
@@ -112,6 +120,10 @@ describe('ReservationsService', () => {
       expect(
         mockPrismaService.reservation.findFirst,
       ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if the room is inactive', async () => {
@@ -131,6 +143,10 @@ describe('ReservationsService', () => {
           'Room not found or inactive',
         ),
       );
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if the date format is invalid', async () => {
@@ -157,6 +173,10 @@ describe('ReservationsService', () => {
 
       expect(
         mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
       ).not.toHaveBeenCalled();
     });
 
@@ -210,6 +230,10 @@ describe('ReservationsService', () => {
       expect(
         mockPrismaService.reservation.findFirst,
       ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if reservation does not start and end on a full hour', async () => {
@@ -236,6 +260,10 @@ describe('ReservationsService', () => {
 
       expect(
         mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
       ).not.toHaveBeenCalled();
     });
 
@@ -266,6 +294,10 @@ describe('ReservationsService', () => {
 
       expect(
         mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
       ).not.toHaveBeenCalled();
     });
 
@@ -298,6 +330,10 @@ describe('ReservationsService', () => {
       expect(
         mockPrismaService.reservation.findFirst,
       ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if reservation starts at 21:00', async () => {
@@ -328,6 +364,10 @@ describe('ReservationsService', () => {
 
       expect(
         mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
       ).not.toHaveBeenCalled();
     });
 
@@ -361,6 +401,10 @@ describe('ReservationsService', () => {
       expect(
         mockPrismaService.reservation.findFirst,
       ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should allow a reservation from 20:00 to 21:00', async () => {
@@ -373,6 +417,10 @@ describe('ReservationsService', () => {
       );
 
       mockPrismaService.reservation.findFirst.mockResolvedValue(
+        null,
+      );
+
+      mockPrismaService.roomBlock.findFirst.mockResolvedValue(
         null,
       );
 
@@ -398,10 +446,25 @@ describe('ReservationsService', () => {
         createdReservation,
       );
 
-      const result = await service.create(
-        userId,
-        validDto,
-      );
+      const result =
+        await service.create(
+          userId,
+          validDto,
+        );
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).toHaveBeenCalledWith({
+        where: {
+          roomId: validDto.roomId,
+          startTime: {
+            lt: new Date(validDto.endTime),
+          },
+          endTime: {
+            gt: new Date(validDto.startTime),
+          },
+        },
+      });
 
       expect(
         mockPrismaService.reservation.create,
@@ -409,8 +472,10 @@ describe('ReservationsService', () => {
         data: {
           doctorId: doctor.id,
           roomId: room.id,
-          startTime: new Date(validDto.startTime),
-          endTime: new Date(validDto.endTime),
+          startTime:
+            new Date(validDto.startTime),
+          endTime:
+            new Date(validDto.endTime),
           totalPrice: 500,
         },
       });
@@ -429,12 +494,10 @@ describe('ReservationsService', () => {
         room,
       );
 
-      mockPrismaService.reservation.findFirst.mockResolvedValue(
-        {
-          id: 'existing-reservation',
-          status: 'CONFIRMED',
-        },
-      );
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'existing-reservation',
+        status: 'CONFIRMED',
+      });
 
       await expect(
         service.create(userId, dto),
@@ -443,6 +506,64 @@ describe('ReservationsService', () => {
           'Room is already reserved for the selected time',
         ),
       );
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).not.toHaveBeenCalled();
+
+      expect(
+        mockPrismaService.reservation.create,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should throw if the room is blocked for the selected time', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      mockPrismaService.reservation.findFirst.mockResolvedValue(
+        null,
+      );
+
+      mockPrismaService.roomBlock.findFirst.mockResolvedValue({
+        id: 'block-123',
+        roomId: room.id,
+        startTime:
+          new Date(
+            '2026-09-01T14:00:00.000Z',
+          ),
+        endTime:
+          new Date(
+            '2026-09-01T16:00:00.000Z',
+          ),
+        reason: 'Maintenance',
+      });
+
+      await expect(
+        service.create(userId, dto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Room is blocked for the selected time',
+        ),
+      );
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).toHaveBeenCalledWith({
+        where: {
+          roomId: dto.roomId,
+          startTime: {
+            lt: new Date(dto.endTime),
+          },
+          endTime: {
+            gt: new Date(dto.startTime),
+          },
+        },
+      });
 
       expect(
         mockPrismaService.reservation.create,
@@ -462,6 +583,10 @@ describe('ReservationsService', () => {
         null,
       );
 
+      mockPrismaService.roomBlock.findFirst.mockResolvedValue(
+        null,
+      );
+
       const createdReservation = {
         id: 'reservation-123',
         doctorId: 'doctor-123',
@@ -476,10 +601,25 @@ describe('ReservationsService', () => {
         createdReservation,
       );
 
-      const result = await service.create(
-        userId,
-        dto,
-      );
+      const result =
+        await service.create(
+          userId,
+          dto,
+        );
+
+      expect(
+        mockPrismaService.roomBlock.findFirst,
+      ).toHaveBeenCalledWith({
+        where: {
+          roomId: dto.roomId,
+          startTime: {
+            lt: new Date(dto.endTime),
+          },
+          endTime: {
+            gt: new Date(dto.startTime),
+          },
+        },
+      });
 
       expect(
         mockPrismaService.reservation.create,
@@ -487,8 +627,10 @@ describe('ReservationsService', () => {
         data: {
           doctorId: 'doctor-123',
           roomId: 'room-123',
-          startTime: new Date(dto.startTime),
-          endTime: new Date(dto.endTime),
+          startTime:
+            new Date(dto.startTime),
+          endTime:
+            new Date(dto.endTime),
           totalPrice: 1000,
         },
       });
@@ -536,9 +678,10 @@ describe('ReservationsService', () => {
         reservations,
       );
 
-      const result = await service.findAll(
-        'user-123',
-      );
+      const result =
+        await service.findAll(
+          'user-123',
+        );
 
       expect(
         mockPrismaService.reservation.findMany,
@@ -554,7 +697,9 @@ describe('ReservationsService', () => {
         },
       });
 
-      expect(result).toEqual(reservations);
+      expect(result).toEqual(
+        reservations,
+      );
     });
   });
 
@@ -577,12 +722,10 @@ describe('ReservationsService', () => {
     });
 
     it('should throw if the reservation does not belong to the doctor', async () => {
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
       mockPrismaService.reservation.findFirst.mockResolvedValue(
         null,
@@ -607,23 +750,24 @@ describe('ReservationsService', () => {
         roomId: 'room-123',
       };
 
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
       mockPrismaService.reservation.findFirst.mockResolvedValue(
         reservation,
       );
 
-      const result = await service.findOne(
-        'user-123',
-        'reservation-123',
-      );
+      const result =
+        await service.findOne(
+          'user-123',
+          'reservation-123',
+        );
 
-      expect(result).toEqual(reservation);
+      expect(result).toEqual(
+        reservation,
+      );
     });
   });
 
@@ -646,12 +790,10 @@ describe('ReservationsService', () => {
     });
 
     it('should throw if the reservation does not exist', async () => {
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
       mockPrismaService.reservation.findFirst.mockResolvedValue(
         null,
@@ -670,19 +812,15 @@ describe('ReservationsService', () => {
     });
 
     it('should throw if the reservation is already cancelled', async () => {
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
-      mockPrismaService.reservation.findFirst.mockResolvedValue(
-        {
-          id: 'reservation-123',
-          status: 'CANCELLED',
-        },
-      );
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'reservation-123',
+        status: 'CANCELLED',
+      });
 
       await expect(
         service.cancel(
@@ -701,19 +839,15 @@ describe('ReservationsService', () => {
     });
 
     it('should throw if the reservation is completed', async () => {
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
-      mockPrismaService.reservation.findFirst.mockResolvedValue(
-        {
-          id: 'reservation-123',
-          status: 'COMPLETED',
-        },
-      );
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'reservation-123',
+        status: 'COMPLETED',
+      });
 
       await expect(
         service.cancel(
@@ -732,19 +866,15 @@ describe('ReservationsService', () => {
     });
 
     it('should cancel a valid reservation', async () => {
-      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
-        {
-          id: 'doctor-123',
-          userId: 'user-123',
-        },
-      );
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({
+        id: 'doctor-123',
+        userId: 'user-123',
+      });
 
-      mockPrismaService.reservation.findFirst.mockResolvedValue(
-        {
-          id: 'reservation-123',
-          status: 'PENDING',
-        },
-      );
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'reservation-123',
+        status: 'PENDING',
+      });
 
       const cancelledReservation = {
         id: 'reservation-123',
@@ -755,10 +885,11 @@ describe('ReservationsService', () => {
         cancelledReservation,
       );
 
-      const result = await service.cancel(
-        'user-123',
-        'reservation-123',
-      );
+      const result =
+        await service.cancel(
+          'user-123',
+          'reservation-123',
+        );
 
       expect(
         mockPrismaService.reservation.update,

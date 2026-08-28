@@ -14,6 +14,7 @@ import { RoomsService } from './rooms.service';
 
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { CreateRoomBlockDto } from './dto/create-room-block.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -38,6 +39,52 @@ export class RoomsController {
         return this.roomsService.getAvailability(
             id,
             date,
+        );
+    }
+
+    @Get(':id/blocks')
+    @UseGuards(
+        JwtAuthGuard,
+        RolesGuard,
+    )
+    @Roles('ADMIN')
+    findBlocks(
+        @Param('id') id: string,
+    ) {
+        return this.roomsService.findBlocks(
+            id,
+        );
+    }
+
+    @Post(':id/blocks')
+    @UseGuards(
+        JwtAuthGuard,
+        RolesGuard,
+    )
+    @Roles('ADMIN')
+    createBlock(
+        @Param('id') id: string,
+        @Body() dto: CreateRoomBlockDto,
+    ) {
+        return this.roomsService.createBlock(
+            id,
+            dto,
+        );
+    }
+
+    @Delete(':id/blocks/:blockId')
+    @UseGuards(
+        JwtAuthGuard,
+        RolesGuard,
+    )
+    @Roles('ADMIN')
+    removeBlock(
+        @Param('id') id: string,
+        @Param('blockId') blockId: string,
+    ) {
+        return this.roomsService.removeBlock(
+            id,
+            blockId,
         );
     }
 

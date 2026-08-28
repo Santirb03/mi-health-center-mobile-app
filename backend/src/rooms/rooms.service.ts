@@ -8,12 +8,23 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
+import { CreateRoomBlockDto } from './dto/create-room-block.dto';
 
 const OPENING_HOUR = 8;
 const CLOSING_HOUR = 21;
 
 const BUSINESS_TIMEZONE = 'America/Mexico_City';
 const BUSINESS_TIMEZONE_OFFSET = '-06:00';
+
+export interface AvailabilitySlot {
+    startTime: string;
+    endTime: string;
+    startDateTime: string;
+    endDateTime: string;
+    available: boolean;
+    blocked: boolean;
+    blockReason: string | null;
+}
 
 @Injectable()
 export class RoomsService {
@@ -63,15 +74,17 @@ export class RoomsService {
             );
         }
 
-        const dayStart = this.createBusinessDate(
-            date,
-            OPENING_HOUR,
-        );
+        const dayStart =
+            this.createBusinessDate(
+                date,
+                OPENING_HOUR,
+            );
 
-        const dayEnd = this.createBusinessDate(
-            date,
-            CLOSING_HOUR,
-        );
+        const dayEnd =
+            this.createBusinessDate(
+                date,
+                CLOSING_HOUR,
+            );
 
         const reservations =
             await this.prisma.reservation.findMany({
@@ -96,7 +109,26 @@ export class RoomsService {
                 },
             });
 
-        const slots = [];
+        const blocks =
+            await this.prisma.roomBlock.findMany({
+                where: {
+                    roomId: id,
+                    startTime: {
+                        lt: dayEnd,
+                    },
+                    endTime: {
+                        gt: dayStart,
+                    },
+                },
+                select: {
+                    id: true,
+                    startTime: true,
+                    endTime: true,
+                    reason: true,
+                },
+            });
+
+        const slots: AvailabilitySlot[] = [];
 
         for (
             let hour = OPENING_HOUR;
@@ -115,7 +147,7 @@ export class RoomsService {
                     hour + 1,
                 );
 
-            const occupied =
+            const occupiedByReservation =
                 reservations.some(
                     (reservation) =>
                         reservation.startTime <
@@ -124,16 +156,40 @@ export class RoomsService {
                         slotStart,
                 );
 
+            const matchingBlock =
+                blocks.find(
+                    (block) =>
+                        block.startTime <
+                        slotEnd &&
+                        block.endTime >
+                        slotStart,
+                );
+
             slots.push({
                 startTime:
                     this.formatHour(hour),
+
                 endTime:
-                    this.formatHour(hour + 1),
+                    this.formatHour(
+                        hour + 1,
+                    ),
+
                 startDateTime:
                     slotStart.toISOString(),
+
                 endDateTime:
                     slotEnd.toISOString(),
-                available: !occupied,
+
+                available:
+                    !occupiedByReservation &&
+                    !matchingBlock,
+
+                blocked:
+                    Boolean(matchingBlock),
+
+                blockReason:
+                    matchingBlock?.reason ??
+                    null,
             });
         }
 
@@ -148,11 +204,14 @@ export class RoomsService {
         };
     }
 
-    async create(dto: CreateRoomDto) {
+    async create(
+        dto: CreateRoomDto,
+    ) {
         return this.prisma.room.create({
             data: {
                 name: dto.name,
-                description: dto.description,
+                description:
+                    dto.description,
                 pricePerHour:
                     dto.pricePerHour,
             },
@@ -186,7 +245,158 @@ export class RoomsService {
         });
     }
 
-    private validateDate(date: string) {
+    async createBlock(
+        roomId: string,
+        dto: CreateRoomBlockDto,
+    ) {
+        const room =
+            await this.findOne(roomId);
+
+        if (!room.active) {
+            throw new NotFoundException(
+                'Room not found or inactive',
+            );
+        }
+
+        const startTime =
+            new Date(dto.startTime);
+
+        const endTime =
+            new Date(dto.endTime);
+
+        if (
+            Number.isNaN(
+                startTime.getTime(),
+            ) ||
+            Number.isNaN(
+                endTime.getTime(),
+            )
+        ) {
+            throw new BadRequestException(
+                'Invalid date format',
+            );
+        }
+
+        if (endTime <= startTime) {
+            throw new BadRequestException(
+                'End time must be after start time',
+            );
+        }
+
+        if (
+            startTime.getUTCMinutes() !== 0 ||
+            startTime.getUTCSeconds() !== 0 ||
+            startTime.getUTCMilliseconds() !==
+            0 ||
+            endTime.getUTCMinutes() !== 0 ||
+            endTime.getUTCSeconds() !== 0 ||
+            endTime.getUTCMilliseconds() !==
+            0
+        ) {
+            throw new BadRequestException(
+                'Room blocks must start and end on a full hour',
+            );
+        }
+
+        const conflictingBlock =
+            await this.prisma.roomBlock.findFirst({
+                where: {
+                    roomId,
+                    startTime: {
+                        lt: endTime,
+                    },
+                    endTime: {
+                        gt: startTime,
+                    },
+                },
+            });
+
+        if (conflictingBlock) {
+            throw new BadRequestException(
+                'Room already has a block for the selected time',
+            );
+        }
+
+        const conflictingReservation =
+            await this.prisma.reservation.findFirst({
+                where: {
+                    roomId,
+                    status: {
+                        in: [
+                            'PENDING',
+                            'CONFIRMED',
+                        ],
+                    },
+                    startTime: {
+                        lt: endTime,
+                    },
+                    endTime: {
+                        gt: startTime,
+                    },
+                },
+            });
+
+        if (conflictingReservation) {
+            throw new BadRequestException(
+                'Room already has a reservation for the selected time',
+            );
+        }
+
+        return this.prisma.roomBlock.create({
+            data: {
+                roomId,
+                startTime,
+                endTime,
+                reason: dto.reason,
+            },
+        });
+    }
+
+    async findBlocks(
+        roomId: string,
+    ) {
+        await this.findOne(roomId);
+
+        return this.prisma.roomBlock.findMany({
+            where: {
+                roomId,
+            },
+            orderBy: {
+                startTime: 'asc',
+            },
+        });
+    }
+
+    async removeBlock(
+        roomId: string,
+        blockId: string,
+    ) {
+        await this.findOne(roomId);
+
+        const block =
+            await this.prisma.roomBlock.findFirst({
+                where: {
+                    id: blockId,
+                    roomId,
+                },
+            });
+
+        if (!block) {
+            throw new NotFoundException(
+                'Room block not found',
+            );
+        }
+
+        return this.prisma.roomBlock.delete({
+            where: {
+                id: blockId,
+            },
+        });
+    }
+
+    private validateDate(
+        date: string,
+    ) {
         if (
             !date ||
             !/^\d{4}-\d{2}-\d{2}$/.test(
