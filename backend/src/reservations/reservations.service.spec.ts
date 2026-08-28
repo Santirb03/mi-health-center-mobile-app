@@ -9,6 +9,8 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('ReservationsService', () => {
   let service: ReservationsService;
 
+  const NOW = new Date('2026-08-28T18:00:00.000Z');
+
   const mockPrismaService = {
     doctorProfile: {
       findUnique: jest.fn(),
@@ -27,6 +29,9 @@ describe('ReservationsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
 
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+
     const module: TestingModule =
       await Test.createTestingModule({
         providers: [
@@ -43,13 +48,19 @@ describe('ReservationsService', () => {
     );
   });
 
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   describe('create', () => {
     const userId = 'user-123';
 
     const dto = {
       roomId: 'room-123',
-      startTime: '2026-09-01T10:00:00.000Z',
-      endTime: '2026-09-01T12:00:00.000Z',
+
+      // 08:00 -> 10:00 Querétaro
+      startTime: '2026-09-01T14:00:00.000Z',
+      endTime: '2026-09-01T16:00:00.000Z',
     };
 
     const doctor = {
@@ -160,8 +171,8 @@ describe('ReservationsService', () => {
 
       const invalidDto = {
         ...dto,
-        startTime: '2026-09-01T12:00:00.000Z',
-        endTime: '2026-09-01T10:00:00.000Z',
+        startTime: '2026-09-01T16:00:00.000Z',
+        endTime: '2026-09-01T14:00:00.000Z',
       };
 
       await expect(
@@ -171,6 +182,34 @@ describe('ReservationsService', () => {
           'End time must be after start time',
         ),
       );
+    });
+
+    it('should throw if the reservation starts in the past', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      const invalidDto = {
+        ...dto,
+        startTime: '2026-08-28T17:00:00.000Z',
+        endTime: '2026-08-28T18:00:00.000Z',
+      };
+
+      await expect(
+        service.create(userId, invalidDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Reservations cannot be made in the past',
+        ),
+      );
+
+      expect(
+        mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
     });
 
     it('should throw if reservation does not start and end on a full hour', async () => {
@@ -184,7 +223,7 @@ describe('ReservationsService', () => {
 
       const invalidDto = {
         ...dto,
-        startTime: '2026-09-01T10:30:00.000Z',
+        startTime: '2026-09-01T14:30:00.000Z',
       };
 
       await expect(
@@ -198,6 +237,187 @@ describe('ReservationsService', () => {
       expect(
         mockPrismaService.reservation.findFirst,
       ).not.toHaveBeenCalled();
+    });
+
+    it('should throw if reservation starts before 08:00', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      const invalidDto = {
+        ...dto,
+
+        // 07:00 -> 08:00 Querétaro
+        startTime: '2026-09-01T13:00:00.000Z',
+        endTime: '2026-09-01T14:00:00.000Z',
+      };
+
+      await expect(
+        service.create(userId, invalidDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Reservations must be within business hours from 08:00 to 21:00',
+        ),
+      );
+
+      expect(
+        mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should throw if reservation ends after 21:00', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      const invalidDto = {
+        ...dto,
+
+        // September 1:
+        // 20:00 -> 22:00 Querétaro
+        startTime: '2026-09-02T02:00:00.000Z',
+        endTime: '2026-09-02T04:00:00.000Z',
+      };
+
+      await expect(
+        service.create(userId, invalidDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Reservations must be within business hours from 08:00 to 21:00',
+        ),
+      );
+
+      expect(
+        mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should throw if reservation starts at 21:00', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      const invalidDto = {
+        ...dto,
+
+        // September 1:
+        // 21:00 -> 22:00 Querétaro
+        startTime: '2026-09-02T03:00:00.000Z',
+        endTime: '2026-09-02T04:00:00.000Z',
+      };
+
+      await expect(
+        service.create(userId, invalidDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Reservations must be within business hours from 08:00 to 21:00',
+        ),
+      );
+
+      expect(
+        mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should throw if reservation crosses into another business day', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      const invalidDto = {
+        ...dto,
+
+        // September 1, 20:00 Querétaro
+        startTime: '2026-09-02T02:00:00.000Z',
+
+        // September 2, 08:00 Querétaro
+        endTime: '2026-09-02T14:00:00.000Z',
+      };
+
+      await expect(
+        service.create(userId, invalidDto),
+      ).rejects.toThrow(
+        new BadRequestException(
+          'Reservations must start and end on the same day',
+        ),
+      );
+
+      expect(
+        mockPrismaService.reservation.findFirst,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('should allow a reservation from 20:00 to 21:00', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
+        doctor,
+      );
+
+      mockPrismaService.room.findUnique.mockResolvedValue(
+        room,
+      );
+
+      mockPrismaService.reservation.findFirst.mockResolvedValue(
+        null,
+      );
+
+      const validDto = {
+        ...dto,
+
+        // September 1, 20:00 -> 21:00 Querétaro
+        startTime: '2026-09-02T02:00:00.000Z',
+        endTime: '2026-09-02T03:00:00.000Z',
+      };
+
+      const createdReservation = {
+        id: 'reservation-closing-hour',
+        doctorId: doctor.id,
+        roomId: room.id,
+        startTime: new Date(validDto.startTime),
+        endTime: new Date(validDto.endTime),
+        totalPrice: 500,
+        status: 'PENDING',
+      };
+
+      mockPrismaService.reservation.create.mockResolvedValue(
+        createdReservation,
+      );
+
+      const result = await service.create(
+        userId,
+        validDto,
+      );
+
+      expect(
+        mockPrismaService.reservation.create,
+      ).toHaveBeenCalledWith({
+        data: {
+          doctorId: doctor.id,
+          roomId: room.id,
+          startTime: new Date(validDto.startTime),
+          endTime: new Date(validDto.endTime),
+          totalPrice: 500,
+        },
+      });
+
+      expect(result).toEqual(
+        createdReservation,
+      );
     });
 
     it('should throw if the room is already reserved', async () => {
