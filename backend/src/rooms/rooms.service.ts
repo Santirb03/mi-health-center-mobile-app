@@ -90,18 +90,23 @@ export class RoomsService {
             await this.prisma.reservation.findMany({
                 where: {
                     roomId: id,
-                    status: {
-                        in: [
-                            'PENDING',
-                            'CONFIRMED',
-                        ],
-                    },
                     startTime: {
                         lt: dayEnd,
                     },
                     endTime: {
                         gt: dayStart,
                     },
+                    OR: [
+                        {
+                            status: 'CONFIRMED',
+                        },
+                        {
+                            status: 'PENDING',
+                            expiresAt: {
+                                gt: new Date(),
+                            },
+                        },
+                    ],
                 },
                 select: {
                     startTime: true,
@@ -321,18 +326,23 @@ export class RoomsService {
             await this.prisma.reservation.findFirst({
                 where: {
                     roomId,
-                    status: {
-                        in: [
-                            'PENDING',
-                            'CONFIRMED',
-                        ],
-                    },
                     startTime: {
                         lt: endTime,
                     },
                     endTime: {
                         gt: startTime,
                     },
+                    OR: [
+                        {
+                            status: 'CONFIRMED',
+                        },
+                        {
+                            status: 'PENDING',
+                            expiresAt: {
+                                gt: new Date(),
+                            },
+                        },
+                    ],
                 },
             });
 

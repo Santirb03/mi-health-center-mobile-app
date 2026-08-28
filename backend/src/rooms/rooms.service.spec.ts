@@ -357,7 +357,7 @@ describe('RoomsService', () => {
       );
     });
 
-    it('should query only pending and confirmed reservations', async () => {
+    it('should query confirmed reservations and only unexpired pending reservations', async () => {
       mockPrismaService.room.findUnique.mockResolvedValue({
         id: 'room-123',
         name: 'Room A',
@@ -383,13 +383,6 @@ describe('RoomsService', () => {
         where: {
           roomId: 'room-123',
 
-          status: {
-            in: [
-              'PENDING',
-              'CONFIRMED',
-            ],
-          },
-
           startTime: {
             lt: new Date(
               '2026-09-02T03:00:00.000Z',
@@ -401,6 +394,18 @@ describe('RoomsService', () => {
               '2026-09-01T14:00:00.000Z',
             ),
           },
+
+          OR: [
+            {
+              status: 'CONFIRMED',
+            },
+            {
+              status: 'PENDING',
+              expiresAt: {
+                gt: expect.any(Date),
+              },
+            },
+          ],
         },
 
         select: {

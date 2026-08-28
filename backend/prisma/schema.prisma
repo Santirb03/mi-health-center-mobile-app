@@ -16,6 +16,7 @@ enum ReservationStatus {
   CONFIRMED
   CANCELLED
   COMPLETED
+  EXPIRED
 }
 
 enum AppointmentStatus {
@@ -103,6 +104,7 @@ model Reservation {
   endTime    DateTime
   totalPrice Decimal           @db.Decimal(10, 2)
   status     ReservationStatus @default(PENDING)
+  expiresAt  DateTime?
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
@@ -113,6 +115,7 @@ model Reservation {
   @@index([doctorId])
   @@index([roomId])
   @@index([startTime, endTime])
+  @@index([status, expiresAt])
   @@map("reservations")
 }
 

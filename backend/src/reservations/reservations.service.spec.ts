@@ -440,6 +440,7 @@ describe('ReservationsService', () => {
         endTime: new Date(validDto.endTime),
         totalPrice: 500,
         status: 'PENDING',
+        expiresAt: new Date('2026-08-28T18:08:00.000Z'),
       };
 
       mockPrismaService.reservation.create.mockResolvedValue(
@@ -477,6 +478,8 @@ describe('ReservationsService', () => {
           endTime:
             new Date(validDto.endTime),
           totalPrice: 500,
+          status: 'PENDING',
+          expiresAt: new Date('2026-08-28T18:08:00.000Z'),
         },
       });
 
@@ -595,6 +598,7 @@ describe('ReservationsService', () => {
         endTime: new Date(dto.endTime),
         totalPrice: 1000,
         status: 'PENDING',
+        expiresAt: new Date('2026-08-28T18:08:00.000Z'),
       };
 
       mockPrismaService.reservation.create.mockResolvedValue(
@@ -632,6 +636,8 @@ describe('ReservationsService', () => {
           endTime:
             new Date(dto.endTime),
           totalPrice: 1000,
+          status: 'PENDING',
+          expiresAt: new Date('2026-08-28T18:08:00.000Z'),
         },
       });
 

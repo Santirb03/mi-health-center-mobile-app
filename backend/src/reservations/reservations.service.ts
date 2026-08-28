@@ -11,6 +11,8 @@ import { CreateReservationDto } from './dto/create-reservation.dto';
 const OPENING_HOUR = 8;
 const CLOSING_HOUR = 21;
 
+const PENDING_HOLD_MINUTES = 8;
+
 // Querétaro / Mexico City currently operates at UTC-06:00.
 // This matches the timezone logic used by room availability.
 const BUSINESS_TIMEZONE_OFFSET_HOURS = -6;
@@ -100,7 +102,9 @@ export class ReservationsService {
          * If the reservation starts before or at the
          * current instant, it can no longer be booked.
          */
-        if (startTime <= new Date()) {
+        const now = new Date();
+
+        if (startTime <= now) {
             throw new BadRequestException(
                 'Reservations cannot be made in the past',
             );
@@ -179,24 +183,39 @@ export class ReservationsService {
         }
 
         /**
-         * Check overlap against active reservations.
+         * Check overlap against reservations that are
+         * currently occupying the room.
+         *
+         * CONFIRMED reservations always block the slot.
+         *
+         * PENDING reservations only block the slot while
+         * their payment hold has not expired.
+         *
+         * An expired PENDING reservation therefore stops
+         * blocking immediately, even if its status has not
+         * yet been changed to EXPIRED.
          */
         const conflictingReservation =
             await this.prisma.reservation.findFirst({
                 where: {
                     roomId: dto.roomId,
-                    status: {
-                        in: [
-                            'PENDING',
-                            'CONFIRMED',
-                        ],
-                    },
                     startTime: {
                         lt: endTime,
                     },
                     endTime: {
                         gt: startTime,
                     },
+                    OR: [
+                        {
+                            status: 'CONFIRMED',
+                        },
+                        {
+                            status: 'PENDING',
+                            expiresAt: {
+                                gt: now,
+                            },
+                        },
+                    ],
                 },
             });
 
@@ -245,6 +264,21 @@ export class ReservationsService {
             Number(room.pricePerHour) *
             durationInHours;
 
+        /**
+         * The room is held for payment for exactly
+         * PENDING_HOLD_MINUTES.
+         *
+         * The backend timestamp is authoritative.
+         * The mobile countdown will only represent
+         * this expiresAt value to the user.
+         */
+        const expiresAt = new Date(
+            now.getTime() +
+            PENDING_HOLD_MINUTES *
+            60 *
+            1000,
+        );
+
         const reservation =
             await this.prisma.reservation.create({
                 data: {
@@ -253,6 +287,8 @@ export class ReservationsService {
                     startTime,
                     endTime,
                     totalPrice,
+                    status: 'PENDING',
+                    expiresAt,
                 },
             });
 
@@ -362,6 +398,15 @@ export class ReservationsService {
         ) {
             throw new BadRequestException(
                 'Reservation is already cancelled',
+            );
+        }
+
+        if (
+            reservation.status ===
+            'EXPIRED'
+        ) {
+            throw new BadRequestException(
+                'Reservation is already expired',
             );
         }
 

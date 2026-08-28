@@ -20,7 +20,9 @@ export class PaymentsService {
         );
 
         if (!stripeSecret) {
-            throw new Error('STRIPE_SECRET_KEY is not configured');
+            throw new Error(
+                'STRIPE_SECRET_KEY is not configured',
+            );
         }
 
         this.stripe = new Stripe(stripeSecret);
@@ -30,14 +32,17 @@ export class PaymentsService {
         userId: string,
         reservationId: string,
     ) {
-        const doctor = await this.prisma.doctorProfile.findUnique({
-            where: {
-                userId,
-            },
-        });
+        const doctor =
+            await this.prisma.doctorProfile.findUnique({
+                where: {
+                    userId,
+                },
+            });
 
         if (!doctor) {
-            throw new NotFoundException('Doctor profile not found');
+            throw new NotFoundException(
+                'Doctor profile not found',
+            );
         }
 
         const reservation =
@@ -49,12 +54,34 @@ export class PaymentsService {
             });
 
         if (!reservation) {
-            throw new NotFoundException('Reservation not found');
+            throw new NotFoundException(
+                'Reservation not found',
+            );
         }
 
         if (reservation.status !== 'PENDING') {
             throw new BadRequestException(
                 'Only pending reservations can be paid',
+            );
+        }
+
+        const now = new Date();
+
+        if (
+            !reservation.expiresAt ||
+            reservation.expiresAt <= now
+        ) {
+            await this.prisma.reservation.update({
+                where: {
+                    id: reservation.id,
+                },
+                data: {
+                    status: 'EXPIRED',
+                },
+            });
+
+            throw new BadRequestException(
+                'Reservation payment hold has expired',
             );
         }
 
@@ -86,6 +113,7 @@ export class PaymentsService {
                         existingPaymentIntent.client_secret,
                     paymentIntentId:
                         existingPaymentIntent.id,
+                    expiresAt: reservation.expiresAt,
                 };
             }
         }
@@ -143,6 +171,7 @@ export class PaymentsService {
         return {
             clientSecret: paymentIntent.client_secret,
             paymentIntentId: paymentIntent.id,
+            expiresAt: reservation.expiresAt,
         };
     }
 
@@ -174,14 +203,19 @@ export class PaymentsService {
                 throw error;
             }
 
-            if (event.type === 'payment_intent.succeeded') {
+            if (
+                event.type ===
+                'payment_intent.succeeded'
+            ) {
                 const paymentIntent =
-                    event.data.object as Stripe.PaymentIntent;
+                    event.data
+                        .object as Stripe.PaymentIntent;
 
                 const payment =
                     await tx.payment.findUnique({
                         where: {
-                            transactionId: paymentIntent.id,
+                            transactionId:
+                                paymentIntent.id,
                         },
                     });
 
@@ -196,7 +230,8 @@ export class PaymentsService {
                 );
 
                 if (
-                    paymentIntent.amount !== expectedAmount
+                    paymentIntent.amount !==
+                    expectedAmount
                 ) {
                     throw new BadRequestException(
                         'Payment amount does not match Stripe amount',
@@ -210,6 +245,156 @@ export class PaymentsService {
                     };
                 }
 
+                const reservation =
+                    await tx.reservation.findUnique({
+                        where: {
+                            id: payment.reservationId,
+                        },
+                    });
+
+                if (!reservation) {
+                    throw new NotFoundException(
+                        'Reservation not found',
+                    );
+                }
+
+                const paymentSucceededAt =
+                    new Date(event.created * 1000);
+
+                const holdExpiredBeforePayment =
+                    !reservation.expiresAt ||
+                    paymentSucceededAt >
+                        reservation.expiresAt;
+
+                const reservationCannotBeConfirmed =
+                    reservation.status === 'CANCELLED' ||
+                    reservation.status === 'EXPIRED';
+
+                if (
+                    holdExpiredBeforePayment ||
+                    reservationCannotBeConfirmed
+                ) {
+                    await this.stripe.refunds.create(
+                        {
+                            payment_intent:
+                                paymentIntent.id,
+                        },
+                        {
+                            idempotencyKey:
+                                `expired-reservation-refund-${paymentIntent.id}`,
+                        },
+                    );
+
+                    await tx.payment.update({
+                        where: {
+                            id: payment.id,
+                        },
+                        data: {
+                            status: 'REFUNDED',
+                        },
+                    });
+
+                    if (
+                        reservation.status ===
+                        'PENDING'
+                    ) {
+                        await tx.reservation.update({
+                            where: {
+                                id: reservation.id,
+                            },
+                            data: {
+                                status: 'EXPIRED',
+                            },
+                        });
+                    }
+
+                    return {
+                        duplicate: false,
+                        processed: true,
+                        refunded: true,
+                    };
+                }
+
+                if (
+                    reservation.status !== 'PENDING' &&
+                    reservation.status !==
+                        'CONFIRMED'
+                ) {
+                    throw new BadRequestException(
+                        'Reservation cannot be confirmed',
+                    );
+                }
+
+                const conflictingReservation =
+                    await tx.reservation.findFirst({
+                        where: {
+                            id: {
+                                not: reservation.id,
+                            },
+                            roomId:
+                                reservation.roomId,
+                            startTime: {
+                                lt: reservation.endTime,
+                            },
+                            endTime: {
+                                gt: reservation.startTime,
+                            },
+                            OR: [
+                                {
+                                    status: 'CONFIRMED',
+                                },
+                                {
+                                    status: 'PENDING',
+                                    expiresAt: {
+                                        gt: new Date(),
+                                    },
+                                },
+                            ],
+                        },
+                    });
+
+                if (conflictingReservation) {
+                    await this.stripe.refunds.create(
+                        {
+                            payment_intent:
+                                paymentIntent.id,
+                        },
+                        {
+                            idempotencyKey:
+                                `reservation-conflict-refund-${paymentIntent.id}`,
+                        },
+                    );
+
+                    await tx.payment.update({
+                        where: {
+                            id: payment.id,
+                        },
+                        data: {
+                            status: 'REFUNDED',
+                        },
+                    });
+
+                    if (
+                        reservation.status ===
+                        'PENDING'
+                    ) {
+                        await tx.reservation.update({
+                            where: {
+                                id: reservation.id,
+                            },
+                            data: {
+                                status: 'EXPIRED',
+                            },
+                        });
+                    }
+
+                    return {
+                        duplicate: false,
+                        processed: true,
+                        refunded: true,
+                    };
+                }
+
                 await tx.payment.update({
                     where: {
                         id: payment.id,
@@ -219,14 +404,18 @@ export class PaymentsService {
                     },
                 });
 
-                await tx.reservation.update({
-                    where: {
-                        id: payment.reservationId,
-                    },
-                    data: {
-                        status: 'CONFIRMED',
-                    },
-                });
+                if (
+                    reservation.status !== 'CONFIRMED'
+                ) {
+                    await tx.reservation.update({
+                        where: {
+                            id: payment.reservationId,
+                        },
+                        data: {
+                            status: 'CONFIRMED',
+                        },
+                    });
+                }
             }
 
             if (
@@ -234,12 +423,14 @@ export class PaymentsService {
                 'payment_intent.payment_failed'
             ) {
                 const paymentIntent =
-                    event.data.object as Stripe.PaymentIntent;
+                    event.data
+                        .object as Stripe.PaymentIntent;
 
                 const payment =
                     await tx.payment.findUnique({
                         where: {
-                            transactionId: paymentIntent.id,
+                            transactionId:
+                                paymentIntent.id,
                         },
                     });
 
@@ -260,12 +451,14 @@ export class PaymentsService {
                 'payment_intent.canceled'
             ) {
                 const paymentIntent =
-                    event.data.object as Stripe.PaymentIntent;
+                    event.data
+                        .object as Stripe.PaymentIntent;
 
                 const payment =
                     await tx.payment.findUnique({
                         where: {
-                            transactionId: paymentIntent.id,
+                            transactionId:
+                                paymentIntent.id,
                         },
                     });
 
