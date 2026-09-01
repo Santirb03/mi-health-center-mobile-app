@@ -13,6 +13,9 @@ describe('ReservationsService', () => {
   const NOW = new Date('2026-08-28T18:00:00.000Z');
 
   const mockPrismaService = {
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
+    $transaction: jest.fn(),
     doctorProfile: {
       findUnique: jest.fn(),
     },
@@ -35,6 +38,13 @@ describe('ReservationsService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    mockPrismaService.$queryRaw.mockResolvedValue([]);
+    mockPrismaService.$executeRaw.mockResolvedValue(1);
+    mockPrismaService.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrismaService) => unknown) =>
+        callback(mockPrismaService),
+    );
 
     jest.useFakeTimers();
     jest.setSystemTime(NOW);

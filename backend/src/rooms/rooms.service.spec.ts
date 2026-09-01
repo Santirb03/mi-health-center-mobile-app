@@ -15,6 +15,9 @@ describe('RoomsService', () => {
   let service: RoomsService;
 
   const mockPrismaService = {
+    $queryRaw: jest.fn(),
+    $executeRaw: jest.fn(),
+    $transaction: jest.fn(),
     room: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -37,6 +40,13 @@ describe('RoomsService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    mockPrismaService.$queryRaw.mockResolvedValue([]);
+    mockPrismaService.$executeRaw.mockResolvedValue(1);
+    mockPrismaService.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrismaService) => unknown) =>
+        callback(mockPrismaService),
+    );
 
     const module: TestingModule =
       await Test.createTestingModule({

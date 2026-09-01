@@ -303,62 +303,76 @@ export class RoomsService {
             );
         }
 
-        const conflictingBlock =
-            await this.prisma.roomBlock.findFirst({
-                where: {
-                    roomId,
-                    startTime: {
-                        lt: endTime,
-                    },
-                    endTime: {
-                        gt: startTime,
-                    },
-                },
-            });
+        return this.prisma.$transaction(async (tx) => {
+            /**
+             * Reservation creation uses the same transaction-scoped
+             * PostgreSQL advisory lock for this room.
+             *
+             * This prevents a reservation and an administrative block
+             * from both winning the same time range without depending
+             * on the physical database table name.
+             */
+            await tx.$executeRaw`
+                SELECT pg_advisory_xact_lock(hashtext(${roomId}))
+            `;
 
-        if (conflictingBlock) {
-            throw new BadRequestException(
-                'Room already has a block for the selected time',
-            );
-        }
-
-        const conflictingReservation =
-            await this.prisma.reservation.findFirst({
-                where: {
-                    roomId,
-                    startTime: {
-                        lt: endTime,
-                    },
-                    endTime: {
-                        gt: startTime,
-                    },
-                    OR: [
-                        {
-                            status: 'CONFIRMED',
+            const conflictingBlock =
+                await tx.roomBlock.findFirst({
+                    where: {
+                        roomId,
+                        startTime: {
+                            lt: endTime,
                         },
-                        {
-                            status: 'PENDING',
-                            expiresAt: {
-                                gt: new Date(),
+                        endTime: {
+                            gt: startTime,
+                        },
+                    },
+                });
+
+            if (conflictingBlock) {
+                throw new BadRequestException(
+                    'Room already has a block for the selected time',
+                );
+            }
+
+            const conflictingReservation =
+                await tx.reservation.findFirst({
+                    where: {
+                        roomId,
+                        startTime: {
+                            lt: endTime,
+                        },
+                        endTime: {
+                            gt: startTime,
+                        },
+                        OR: [
+                            {
+                                status: 'CONFIRMED',
                             },
-                        },
-                    ],
+                            {
+                                status: 'PENDING',
+                                expiresAt: {
+                                    gt: new Date(),
+                                },
+                            },
+                        ],
+                    },
+                });
+
+            if (conflictingReservation) {
+                throw new BadRequestException(
+                    'Room already has a reservation for the selected time',
+                );
+            }
+
+            return tx.roomBlock.create({
+                data: {
+                    roomId,
+                    startTime,
+                    endTime,
+                    reason: dto.reason,
                 },
             });
-
-        if (conflictingReservation) {
-            throw new BadRequestException(
-                'Room already has a reservation for the selected time',
-            );
-        }
-
-        return this.prisma.roomBlock.create({
-            data: {
-                roomId,
-                startTime,
-                endTime,
-                reason: dto.reason,
-            },
         });
     }
 

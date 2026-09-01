@@ -182,105 +182,109 @@ export class ReservationsService {
             );
         }
 
-        /**
-         * Check overlap against reservations that are
-         * currently occupying the room.
-         *
-         * CONFIRMED reservations always block the slot.
-         *
-         * PENDING reservations only block the slot while
-         * their payment hold has not expired.
-         *
-         * An expired PENDING reservation therefore stops
-         * blocking immediately, even if its status has not
-         * yet been changed to EXPIRED.
-         */
-        const conflictingReservation =
-            await this.prisma.reservation.findFirst({
-                where: {
-                    roomId: dto.roomId,
-                    startTime: {
-                        lt: endTime,
-                    },
-                    endTime: {
-                        gt: startTime,
-                    },
-                    OR: [
-                        {
-                            status: 'CONFIRMED',
+        return this.prisma.$transaction(async (tx) => {
+            /**
+             * Serialize every reservation/block mutation for
+             * the same room using a transaction-scoped PostgreSQL
+             * advisory lock.
+             *
+             * The lock is automatically released when this transaction
+             * commits or rolls back. Requests for different rooms can
+             * still execute concurrently.
+             */
+            await tx.$executeRaw`
+                SELECT pg_advisory_xact_lock(hashtext(${room.id}))
+            `;
+
+            /**
+             * Recalculate now after acquiring the lock. A request
+             * may have waited behind another transaction.
+             */
+            const lockedNow = new Date();
+
+            if (startTime <= lockedNow) {
+                throw new BadRequestException(
+                    'Reservations cannot be made in the past',
+                );
+            }
+
+            /**
+             * Check overlap against reservations that are
+             * currently occupying the room.
+             *
+             * CONFIRMED reservations always block the slot.
+             * PENDING reservations only block while expiresAt
+             * is still in the future.
+             */
+            const conflictingReservation =
+                await tx.reservation.findFirst({
+                    where: {
+                        roomId: dto.roomId,
+                        startTime: {
+                            lt: endTime,
                         },
-                        {
-                            status: 'PENDING',
-                            expiresAt: {
-                                gt: now,
+                        endTime: {
+                            gt: startTime,
+                        },
+                        OR: [
+                            {
+                                status: 'CONFIRMED',
                             },
+                            {
+                                status: 'PENDING',
+                                expiresAt: {
+                                    gt: lockedNow,
+                                },
+                            },
+                        ],
+                    },
+                });
+
+            if (conflictingReservation) {
+                throw new BadRequestException(
+                    'Room is already reserved for the selected time',
+                );
+            }
+
+            /**
+             * Check overlap against administrative room blocks.
+             */
+            const conflictingBlock =
+                await tx.roomBlock.findFirst({
+                    where: {
+                        roomId: dto.roomId,
+                        startTime: {
+                            lt: endTime,
                         },
-                    ],
-                },
-            });
-
-        if (conflictingReservation) {
-            throw new BadRequestException(
-                'Room is already reserved for the selected time',
-            );
-        }
-
-        /**
-         * Check overlap against administrative room blocks.
-         *
-         * Example:
-         *
-         * Block:       14:00 -> 17:00
-         * Reservation  13:00 -> 15:00  ❌
-         * Reservation  16:00 -> 18:00  ❌
-         * Reservation  12:00 -> 14:00  ✅
-         * Reservation  17:00 -> 18:00  ✅
-         */
-        const conflictingBlock =
-            await this.prisma.roomBlock.findFirst({
-                where: {
-                    roomId: dto.roomId,
-                    startTime: {
-                        lt: endTime,
+                        endTime: {
+                            gt: startTime,
+                        },
                     },
-                    endTime: {
-                        gt: startTime,
-                    },
-                },
-            });
+                });
 
-        if (conflictingBlock) {
-            throw new BadRequestException(
-                'Room is blocked for the selected time',
+            if (conflictingBlock) {
+                throw new BadRequestException(
+                    'Room is blocked for the selected time',
+                );
+            }
+
+            const durationInHours =
+                (endTime.getTime() -
+                    startTime.getTime()) /
+                (1000 * 60 * 60);
+
+            const totalPrice =
+                Number(room.pricePerHour) *
+                durationInHours;
+
+            const expiresAt = new Date(
+                lockedNow.getTime() +
+                PENDING_HOLD_MINUTES *
+                60 *
+                1000,
             );
-        }
 
-        const durationInHours =
-            (endTime.getTime() -
-                startTime.getTime()) /
-            (1000 * 60 * 60);
-
-        const totalPrice =
-            Number(room.pricePerHour) *
-            durationInHours;
-
-        /**
-         * The room is held for payment for exactly
-         * PENDING_HOLD_MINUTES.
-         *
-         * The backend timestamp is authoritative.
-         * The mobile countdown will only represent
-         * this expiresAt value to the user.
-         */
-        const expiresAt = new Date(
-            now.getTime() +
-            PENDING_HOLD_MINUTES *
-            60 *
-            1000,
-        );
-
-        const reservation =
-            await this.prisma.reservation.create({
+            return tx.reservation.create({
                 data: {
                     doctorId: doctor.id,
                     roomId: room.id,
@@ -291,8 +295,7 @@ export class ReservationsService {
                     expiresAt,
                 },
             });
-
-        return reservation;
+        });
     }
 
     async findAll(
