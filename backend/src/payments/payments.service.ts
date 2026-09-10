@@ -258,6 +258,19 @@ export class PaymentsService {
                     );
                 }
 
+                /**
+                 * Serialize payment confirmation against every other
+                 * reservation/block mutation for this room. This uses
+                 * the exact same transaction-scoped PostgreSQL advisory
+                 * lock as ReservationsService and RoomsService.
+                 *
+                 * Without this lock, a webhook and a new reservation
+                 * could both pass their conflict checks concurrently.
+                 */
+                await tx.$executeRaw`
+                    SELECT pg_advisory_xact_lock(hashtext(${reservation.roomId}))
+                `;
+
                 const paymentSucceededAt =
                     new Date(event.created * 1000);
 

@@ -31,6 +31,7 @@ describe('PaymentsService', () => {
 
     const mockTxPaymentFindUnique = jest.fn();
     const mockTxPaymentUpdate = jest.fn();
+    const mockTxExecuteRaw = jest.fn();
 
     const mockTx = {
         stripeWebhookEvent: {
@@ -45,6 +46,7 @@ describe('PaymentsService', () => {
             findFirst: mockTxReservationFindFirst,
             update: mockTxReservationUpdate,
         },
+        $executeRaw: mockTxExecuteRaw,
     };
 
     const mockPrisma = {
@@ -77,6 +79,7 @@ describe('PaymentsService', () => {
 
         jest.useFakeTimers();
         jest.setSystemTime(NOW);
+        mockTxExecuteRaw.mockResolvedValue(1);
 
         service = new PaymentsService(
             mockConfigService as any,
@@ -473,6 +476,10 @@ describe('PaymentsService', () => {
                     id: 'reservation-123',
                 },
             });
+
+            expect(
+                mockTxExecuteRaw,
+            ).toHaveBeenCalledTimes(1);
 
             expect(
                 mockTxReservationFindFirst,
