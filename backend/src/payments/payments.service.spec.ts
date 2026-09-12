@@ -31,15 +31,21 @@ describe('PaymentsService', () => {
 
     const mockTxPaymentFindUnique = jest.fn();
     const mockTxPaymentUpdate = jest.fn();
+    const mockTxPaymentUpdateMany = jest.fn();
     const mockTxExecuteRaw = jest.fn();
+    const mockTxRoomBlockFindFirst = jest.fn();
 
     const mockTx = {
+        roomBlock: {
+            findFirst: mockTxRoomBlockFindFirst,
+        },
         stripeWebhookEvent: {
             create: mockStripeWebhookEventCreate,
         },
         payment: {
             findUnique: mockTxPaymentFindUnique,
             update: mockTxPaymentUpdate,
+            updateMany: mockTxPaymentUpdateMany,
         },
         reservation: {
             findUnique: mockTxReservationFindUnique,
@@ -75,11 +81,15 @@ describe('PaymentsService', () => {
     const mockStripeRefundsCreate = jest.fn();
 
     beforeEach(() => {
-        jest.clearAllMocks();
+        jest.resetAllMocks();
+        mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockTx));
+        mockConfigService.get.mockReturnValue('test-stripe-secret');
+        mockTxReservationFindUnique.mockImplementation(() => mockReservationFindFirst());
 
         jest.useFakeTimers();
         jest.setSystemTime(NOW);
         mockTxExecuteRaw.mockResolvedValue(1);
+        mockTxRoomBlockFindFirst.mockResolvedValue(null);
 
         service = new PaymentsService(
             mockConfigService as any,
@@ -102,6 +112,22 @@ describe('PaymentsService', () => {
     });
 
     describe('createPaymentIntent', () => {
+        it.each(['CONFIRMED', 'CANCELLED'])('should not expire a reservation that became %s while waiting for the lock', async (status) => {
+            mockDoctorFindUnique.mockResolvedValue({ id: 'doctor-123' });
+            mockReservationFindFirst.mockResolvedValue({
+                id: 'reservation-123', roomId: 'room-123', status: 'PENDING',
+                expiresAt: new Date(NOW.getTime() - 1),
+            });
+            mockTxReservationFindUnique.mockResolvedValue({
+                id: 'reservation-123', status,
+            });
+            await expect(service.createPaymentIntent('user-123', 'reservation-123'))
+                .rejects.toThrow('Reservation payment hold has expired');
+            expect(mockTxReservationUpdate).not.toHaveBeenCalled();
+            expect(mockReservationUpdate).not.toHaveBeenCalled();
+            expect(mockStripePaymentIntentsCreate).not.toHaveBeenCalled();
+        });
+
         it('should create a payment intent for an unexpired pending reservation', async () => {
             const expiresAt = new Date(
                 '2026-08-28T18:08:00.000Z',
@@ -204,7 +230,7 @@ describe('PaymentsService', () => {
                 ),
             });
 
-            mockReservationUpdate.mockResolvedValue({
+            mockTxReservationUpdate.mockResolvedValue({
                 id: 'reservation-123',
                 status: 'EXPIRED',
             });
@@ -221,7 +247,7 @@ describe('PaymentsService', () => {
             );
 
             expect(
-                mockReservationUpdate,
+                mockTxReservationUpdate,
             ).toHaveBeenCalledWith({
                 where: {
                     id: 'reservation-123',
@@ -252,7 +278,7 @@ describe('PaymentsService', () => {
                 expiresAt: null,
             });
 
-            mockReservationUpdate.mockResolvedValue({
+            mockTxReservationUpdate.mockResolvedValue({
                 id: 'reservation-123',
                 status: 'EXPIRED',
             });
@@ -269,7 +295,7 @@ describe('PaymentsService', () => {
             );
 
             expect(
-                mockReservationUpdate,
+                mockTxReservationUpdate,
             ).toHaveBeenCalledWith({
                 where: {
                     id: 'reservation-123',
@@ -394,6 +420,100 @@ describe('PaymentsService', () => {
     });
 
     describe('handleStripeWebhook', () => {
+        function prepareSuccess() {
+            const payment = {
+                id: 'payment-123', reservationId: 'reservation-123',
+                amount: 350, status: 'PENDING',
+            };
+            const reservation = {
+                id: 'reservation-123', roomId: 'room-123', status: 'PENDING',
+                expiresAt: new Date(NOW.getTime() + 60_000),
+                startTime: new Date('2026-09-01T14:00:00Z'),
+                endTime: new Date('2026-09-01T15:00:00Z'),
+            };
+            mockTxPaymentFindUnique.mockResolvedValue(payment);
+            mockTxReservationFindUnique.mockResolvedValue(reservation);
+            mockTxReservationFindFirst.mockResolvedValue(null);
+            const event = {
+                id: 'evt_race', type: 'payment_intent.succeeded',
+                created: Math.floor(NOW.getTime() / 1000),
+                data: { object: { id: 'pi_race', amount: 35000 } },
+            } as Stripe.Event;
+            return { payment, reservation, event };
+        }
+
+        it('should observe a cancellation committed while confirmation waited for the lock', async () => {
+            const { reservation, event } = prepareSuccess();
+            mockTxExecuteRaw.mockImplementation(async () => {
+                mockTxReservationFindUnique.mockResolvedValue({ ...reservation, status: 'CANCELLED' });
+                return 1;
+            });
+            await expect(service.handleStripeWebhook(event)).resolves.toMatchObject({ refunded: true });
+            expect(mockTxReservationUpdate).not.toHaveBeenCalled();
+            expect(mockStripeRefundsCreate).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(['PAID', 'REFUNDED'])('should ignore success when payment became %s while waiting for the lock', async (status) => {
+            const { payment, event } = prepareSuccess();
+            mockTxExecuteRaw.mockImplementation(async () => {
+                mockTxPaymentFindUnique.mockResolvedValue({ ...payment, status });
+                return 1;
+            });
+            await expect(service.handleStripeWebhook(event)).resolves.toMatchObject({ alreadyProcessed: true });
+            expect(mockTxPaymentUpdate).not.toHaveBeenCalled();
+            expect(mockTxReservationUpdate).not.toHaveBeenCalled();
+            expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
+        });
+
+        it.each(['payment_intent.payment_failed', 'payment_intent.canceled'])('should condition %s on a nonterminal payment status', async (type) => {
+            await service.handleStripeWebhook({
+                id: 'evt_failure', type,
+                data: { object: { id: 'pi_race' } },
+            } as Stripe.Event);
+            expect(mockTxPaymentUpdateMany).toHaveBeenCalledWith({
+                where: { transactionId: 'pi_race', status: { in: ['PENDING', 'FAILED'] } },
+                data: { status: 'FAILED' },
+            });
+            expect(mockTxPaymentUpdate).not.toHaveBeenCalled();
+        });
+
+        it('should refund an on-time payment delivered after an administrative block occupies the slot', async () => {
+            mockStripeWebhookEventCreate.mockResolvedValue({ id: 'evt_block' });
+            mockTxPaymentFindUnique.mockResolvedValue({
+                id: 'payment-block', reservationId: 'reservation-block',
+                amount: 350, status: 'PENDING',
+            });
+            mockTxReservationFindUnique.mockResolvedValue({
+                id: 'reservation-block', roomId: 'room-123', status: 'PENDING',
+                startTime: new Date('2026-09-01T14:00:00Z'),
+                endTime: new Date('2026-09-01T15:00:00Z'),
+                expiresAt: new Date(NOW.getTime() - 60_000),
+            });
+            mockTxReservationFindFirst.mockResolvedValue(null);
+            mockTxRoomBlockFindFirst.mockResolvedValue({ id: 'maintenance' });
+
+            const result = await service.handleStripeWebhook({
+                id: 'evt_block', type: 'payment_intent.succeeded',
+                created: Math.floor(NOW.getTime() / 1000) - 120,
+                data: { object: { id: 'pi_block', amount: 35000 } },
+            } as Stripe.Event);
+
+            expect(result).toMatchObject({ refunded: true });
+            expect(mockStripeRefundsCreate).toHaveBeenCalledWith(
+                { payment_intent: 'pi_block' },
+                { idempotencyKey: 'reservation-conflict-refund-pi_block' },
+            );
+            expect(mockTxPaymentUpdate).toHaveBeenCalledWith({
+                where: { id: 'payment-block' }, data: { status: 'REFUNDED' },
+            });
+            expect(mockTxReservationUpdate).toHaveBeenCalledWith({
+                where: { id: 'reservation-block' }, data: { status: 'EXPIRED' },
+            });
+            expect(mockTxReservationUpdate).not.toHaveBeenCalledWith(
+                expect.objectContaining({ data: { status: 'CONFIRMED' } }),
+            );
+        });
+
         it('should mark payment as PAID and reservation as CONFIRMED', async () => {
             const expiresAt = new Date(
                 '2026-08-28T18:08:00.000Z',
@@ -792,6 +912,9 @@ describe('PaymentsService', () => {
         });
 
         it('should reject the webhook if the payment amount does not match', async () => {
+            mockTxReservationFindUnique.mockResolvedValue({
+                id: 'reservation-123', roomId: 'room-123', status: 'PENDING',
+            });
             mockStripeWebhookEventCreate.mockResolvedValue({
                 id: 'evt_test_amount',
                 type: 'payment_intent.succeeded',

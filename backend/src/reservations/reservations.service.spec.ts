@@ -788,6 +788,17 @@ describe('ReservationsService', () => {
   });
 
   describe('cancel', () => {
+    it('should reject cancellation when the reservation expires while waiting for the room lock', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({ id: 'doctor-123' });
+      mockPrismaService.reservation.findFirst
+        .mockResolvedValueOnce({ id: 'reservation-123', roomId: 'room-123', status: 'PENDING' })
+        .mockResolvedValueOnce({ id: 'reservation-123', roomId: 'room-123', status: 'EXPIRED' });
+
+      await expect(service.cancel('user-123', 'reservation-123'))
+        .rejects.toThrow('Reservation is already expired');
+      expect(mockPrismaService.reservation.update).not.toHaveBeenCalled();
+    });
+
     it('should throw if the doctor profile does not exist', async () => {
       mockPrismaService.doctorProfile.findUnique.mockResolvedValue(
         null,

@@ -381,7 +381,7 @@ export class ReservationsService {
             );
         }
 
-        const reservation =
+        const reservationReference =
             await this.prisma.reservation.findFirst({
                 where: {
                     id: reservationId,
@@ -389,46 +389,37 @@ export class ReservationsService {
                 },
             });
 
-        if (!reservation) {
+        if (!reservationReference) {
             throw new NotFoundException(
                 'Reservation not found',
             );
         }
 
-        if (
-            reservation.status ===
-            'CANCELLED'
-        ) {
-            throw new BadRequestException(
-                'Reservation is already cancelled',
-            );
-        }
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`
+                SELECT pg_advisory_xact_lock(hashtext(${reservationReference.roomId}))
+            `;
+            const reservation = await tx.reservation.findFirst({
+                where: { id: reservationId, doctorId: doctor.id },
+            });
+            if (!reservation) {
+                throw new NotFoundException('Reservation not found');
+            }
 
-        if (
-            reservation.status ===
-            'EXPIRED'
-        ) {
-            throw new BadRequestException(
-                'Reservation is already expired',
-            );
-        }
+            if (reservation.status === 'CANCELLED') {
+                throw new BadRequestException('Reservation is already cancelled');
+            }
+            if (reservation.status === 'EXPIRED') {
+                throw new BadRequestException('Reservation is already expired');
+            }
+            if (reservation.status === 'COMPLETED') {
+                throw new BadRequestException('Completed reservations cannot be cancelled');
+            }
 
-        if (
-            reservation.status ===
-            'COMPLETED'
-        ) {
-            throw new BadRequestException(
-                'Completed reservations cannot be cancelled',
-            );
-        }
-
-        return this.prisma.reservation.update({
-            where: {
-                id: reservation.id,
-            },
-            data: {
-                status: 'CANCELLED',
-            },
+            return tx.reservation.update({
+                where: { id: reservation.id },
+                data: { status: 'CANCELLED' },
+            });
         });
     }
 }

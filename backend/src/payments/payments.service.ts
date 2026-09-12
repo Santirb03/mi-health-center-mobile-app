@@ -71,13 +71,21 @@ export class PaymentsService {
             !reservation.expiresAt ||
             reservation.expiresAt <= now
         ) {
-            await this.prisma.reservation.update({
-                where: {
-                    id: reservation.id,
-                },
-                data: {
-                    status: 'EXPIRED',
-                },
+            await this.prisma.$transaction(async (tx) => {
+                await tx.$executeRaw`
+                    SELECT pg_advisory_xact_lock(hashtext(${reservation.roomId}))
+                `;
+                // Confirmation or cancellation may have committed while we waited.
+                const current = await tx.reservation.findUnique({
+                    where: { id: reservation.id },
+                });
+                if (current?.status === 'PENDING' &&
+                    (!current.expiresAt || current.expiresAt <= new Date())) {
+                    await tx.reservation.update({
+                        where: { id: current.id },
+                        data: { status: 'EXPIRED' },
+                    });
+                }
             });
 
             throw new BadRequestException(
@@ -211,7 +219,7 @@ export class PaymentsService {
                     event.data
                         .object as Stripe.PaymentIntent;
 
-                const payment =
+                const paymentReference =
                     await tx.payment.findUnique({
                         where: {
                             transactionId:
@@ -219,40 +227,20 @@ export class PaymentsService {
                         },
                     });
 
-                if (!payment) {
+                if (!paymentReference) {
                     throw new NotFoundException(
                         'Payment not found',
                     );
                 }
 
-                const expectedAmount = Math.round(
-                    Number(payment.amount) * 100,
-                );
-
-                if (
-                    paymentIntent.amount !==
-                    expectedAmount
-                ) {
-                    throw new BadRequestException(
-                        'Payment amount does not match Stripe amount',
-                    );
-                }
-
-                if (payment.status === 'PAID') {
-                    return {
-                        duplicate: false,
-                        alreadyProcessed: true,
-                    };
-                }
-
-                const reservation =
+                const reservationReference =
                     await tx.reservation.findUnique({
                         where: {
-                            id: payment.reservationId,
+                            id: paymentReference.reservationId,
                         },
                     });
 
-                if (!reservation) {
+                if (!reservationReference) {
                     throw new NotFoundException(
                         'Reservation not found',
                     );
@@ -268,8 +256,28 @@ export class PaymentsService {
                  * could both pass their conflict checks concurrently.
                  */
                 await tx.$executeRaw`
-                    SELECT pg_advisory_xact_lock(hashtext(${reservation.roomId}))
+                    SELECT pg_advisory_xact_lock(hashtext(${reservationReference.roomId}))
                 `;
+
+                // Pre-lock reads locate the room only. Make decisions from fresh state.
+                const payment = await tx.payment.findUnique({
+                    where: { transactionId: paymentIntent.id },
+                });
+                const reservation = await tx.reservation.findUnique({
+                    where: { id: paymentReference.reservationId },
+                });
+                if (!payment || !reservation) {
+                    throw new NotFoundException('Payment or reservation not found');
+                }
+                const expectedAmount = Math.round(Number(payment.amount) * 100);
+                if (paymentIntent.amount !== expectedAmount) {
+                    throw new BadRequestException(
+                        'Payment amount does not match Stripe amount',
+                    );
+                }
+                if (payment.status === 'PAID' || payment.status === 'REFUNDED') {
+                    return { duplicate: false, alreadyProcessed: true };
+                }
 
                 const paymentSucceededAt =
                     new Date(event.created * 1000);
@@ -366,7 +374,15 @@ export class PaymentsService {
                         },
                     });
 
-                if (conflictingReservation) {
+                const conflictingBlock = await tx.roomBlock.findFirst({
+                    where: {
+                        roomId: reservation.roomId,
+                        startTime: { lt: reservation.endTime },
+                        endTime: { gt: reservation.startTime },
+                    },
+                });
+
+                if (conflictingReservation || conflictingBlock) {
                     await this.stripe.refunds.create(
                         {
                             payment_intent:
@@ -433,58 +449,22 @@ export class PaymentsService {
 
             if (
                 event.type ===
-                'payment_intent.payment_failed'
+                'payment_intent.payment_failed' ||
+                event.type === 'payment_intent.canceled'
             ) {
                 const paymentIntent =
                     event.data
                         .object as Stripe.PaymentIntent;
 
-                const payment =
-                    await tx.payment.findUnique({
-                        where: {
-                            transactionId:
-                                paymentIntent.id,
-                        },
-                    });
-
-                if (payment) {
-                    await tx.payment.update({
-                        where: {
-                            id: payment.id,
-                        },
-                        data: {
-                            status: 'FAILED',
-                        },
-                    });
-                }
-            }
-
-            if (
-                event.type ===
-                'payment_intent.canceled'
-            ) {
-                const paymentIntent =
-                    event.data
-                        .object as Stripe.PaymentIntent;
-
-                const payment =
-                    await tx.payment.findUnique({
-                        where: {
-                            transactionId:
-                                paymentIntent.id,
-                        },
-                    });
-
-                if (payment) {
-                    await tx.payment.update({
-                        where: {
-                            id: payment.id,
-                        },
-                        data: {
-                            status: 'FAILED',
-                        },
-                    });
-                }
+                // Atomic predicate: a delayed failure must never overwrite money
+                // already collected or refunded, even during concurrent delivery.
+                await tx.payment.updateMany({
+                    where: {
+                        transactionId: paymentIntent.id,
+                        status: { in: ['PENDING', 'FAILED'] },
+                    },
+                    data: { status: 'FAILED' },
+                });
             }
 
             return {
