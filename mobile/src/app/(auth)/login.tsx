@@ -1,140 +1,130 @@
-import { useState } from 'react';
+import { useState } from "react";
 import {
-    Alert,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from 'react-native';
+  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from "react-native";
 
-import { login } from '../../services/auth';
-import { router } from 'expo-router';
-import { saveTokens } from '../../services/storage';
+import axios from "axios";
+import { useSession } from "../../providers/session-provider";
+import { getErrorMessage } from "../../services/errors";
 
 export default function LoginScreen() {
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false);
+  const { signIn } = useSession();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-    async function handleLogin() {
-        if (!email || !password) {
-            Alert.alert('Error', 'Ingresa tu email y contraseña');
-            return;
-        }
-
-        try {
-            setLoading(true);
-
-            const data = await login({
-                email,
-                password,
-            });
-
-            await saveTokens(
-                data.accessToken,
-                data.refreshToken,
-            );
-
-            console.log('LOGIN SUCCESS');
-
-            router.replace('/home');
-
-        } catch (error: any) {
-            console.log('LOGIN ERROR:', error);
-            console.log('RESPONSE:', error.response?.data);
-            console.log('STATUS:', error.response?.status);
-            console.log('MESSAGE:', error.message);
-
-            Alert.alert(
-                'Error',
-                error.response?.data?.message ??
-                error.message ??
-                'No se pudo iniciar sesión',
-            );
-        } finally {
-            setLoading(false);
-        }
+  async function handleLogin() {
+    if (loading) return;
+    if (!email.trim() || !password) {
+      Alert.alert("Error", "Ingresa tu correo electrónico y contraseña");
+      return;
     }
 
-    return (
-        <View style={styles.container}>
-            <Text style={styles.title}>
-                Mi Health Center
-            </Text>
+    try {
+      setLoading(true);
 
-            <Text style={styles.subtitle}>
-                Iniciar sesión
-            </Text>
+      await signIn({
+        email: email.trim(),
+        password,
+      });
+    } catch (error) {
+      Alert.alert(
+        "Error",
+        axios.isAxiosError(error) && error.response?.status === 401
+          ? "El correo electrónico o la contraseña son incorrectos."
+          : getErrorMessage(
+              error,
+              "No se pudo iniciar sesión. Revisa tus datos e intenta de nuevo.",
+            ),
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
-            <TextInput
-                style={styles.input}
-                placeholder="Email"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-            />
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Mi Health Center</Text>
 
-            <TextInput
-                style={styles.input}
-                placeholder="Contraseña"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-            />
+      <Text style={styles.subtitle}>Iniciar sesión</Text>
 
-            <TouchableOpacity
-                style={styles.button}
-                onPress={handleLogin}
-                disabled={loading}
-            >
-                <Text style={styles.buttonText}>
-                    {loading ? 'Iniciando...' : 'Iniciar sesión'}
-                </Text>
-            </TouchableOpacity>
-        </View>
-    );
+      <TextInput
+        style={styles.input}
+        placeholder="Correo electrónico"
+        accessibilityLabel="Correo electrónico"
+        editable={!loading}
+        value={email}
+        onChangeText={setEmail}
+        autoCapitalize="none"
+        keyboardType="email-address"
+      />
+
+      <TextInput
+        style={styles.input}
+        placeholder="Contraseña"
+        accessibilityLabel="Contraseña"
+        editable={!loading}
+        value={password}
+        onChangeText={setPassword}
+        secureTextEntry
+      />
+
+      <TouchableOpacity
+        style={styles.button}
+        onPress={handleLogin}
+        disabled={loading}
+      >
+        <Text style={styles.buttonText}>
+          {loading ? "Iniciando..." : "Iniciar sesión"}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        justifyContent: 'center',
-        padding: 24,
-        backgroundColor: '#fff',
-    },
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+    backgroundColor: "#fff",
+  },
 
-    title: {
-        fontSize: 32,
-        fontWeight: 'bold',
-        marginBottom: 8,
-    },
+  title: {
+    fontSize: 32,
+    fontWeight: "bold",
+    marginBottom: 8,
+  },
 
-    subtitle: {
-        fontSize: 20,
-        marginBottom: 32,
-    },
+  subtitle: {
+    fontSize: 20,
+    marginBottom: 32,
+  },
 
-    input: {
-        borderWidth: 1,
-        borderColor: '#ccc',
-        borderRadius: 10,
-        padding: 14,
-        marginBottom: 16,
-        fontSize: 16,
-    },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ccc",
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    fontSize: 16,
+  },
 
-    button: {
-        backgroundColor: '#208AEF',
-        padding: 16,
-        borderRadius: 10,
-        alignItems: 'center',
-    },
+  button: {
+    backgroundColor: "#208AEF",
+    padding: 16,
+    borderRadius: 10,
+    alignItems: "center",
+  },
 
-    buttonText: {
-        color: '#fff',
-        fontSize: 16,
-        fontWeight: 'bold',
-    },
+  buttonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
 });

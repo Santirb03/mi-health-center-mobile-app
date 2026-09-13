@@ -1,27 +1,24 @@
-import { api } from './api';
-import { saveTokens } from './storage';
-
-export interface LoginResponse {
-    accessToken: string;
-    refreshToken: string;
-}
+import { publicApi, session } from "./api";
+import { Tokens } from "./session";
 
 export interface LoginData {
-    email: string;
-    password: string;
+  email: string;
+  password: string;
 }
 
-export async function login(
-    data: LoginData,
-): Promise<LoginResponse> {
-    const response = await api.post<LoginResponse>(
-        '/auth/login',
-        data,
-    );
+export async function login(data: LoginData) {
+  const version = await session.beginLogin();
+  const response = await publicApi.post<Tokens>("/auth/login", data);
+  await session.save(response.data, version);
+}
 
-    const { accessToken, refreshToken } = response.data;
-
-    await saveTokens(accessToken, refreshToken);
-
-    return response.data;
+export async function logout() {
+  const accessToken = session.getTokens()?.accessToken;
+  // Invalidate locally before network I/O; stale requests cannot revive it.
+  await session.clear();
+  if (accessToken) {
+    await publicApi.post("/auth/logout", undefined, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  }
 }
