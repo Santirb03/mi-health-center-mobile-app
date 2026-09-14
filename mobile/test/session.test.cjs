@@ -356,6 +356,30 @@ test(
   },
 );
 
+for (const failureMode of ["timeout", "server-error"]) {
+  test(
+    `reservation POST is never replayed after ${failureMode}`,
+    bounded,
+    async () => {
+      const { api, publicApi } = await setup();
+      let posts = 0;
+      let refreshes = 0;
+      publicApi.defaults.adapter = async (config) => {
+        refreshes++;
+        return response(config, rotated);
+      };
+      api.defaults.adapter = async (config) => {
+        posts++;
+        if (failureMode === "server-error") return reject(config, 500);
+        throw new axios.AxiosError("Timeout", "ECONNABORTED", config);
+      };
+      await assert.rejects(api.post("/reservations", { roomId: "room" }));
+      assert.equal(posts, 1);
+      assert.equal(refreshes, 0);
+    },
+  );
+}
+
 test("UI errors never expose server messages or Axios configuration", () => {
   const error = new axios.AxiosError(
     "secret request details",

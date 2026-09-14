@@ -41,7 +41,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "node --test test/session.test.cjs"
+    "test": "node --test test/session.test.cjs test/booking.test.cjs"
   },
   "private": true
 }

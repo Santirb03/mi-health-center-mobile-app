@@ -9,6 +9,7 @@ import {
   View,
 } from "react-native";
 import axios from "axios";
+import { router } from "expo-router";
 import { api } from "../services/api";
 import { useSession } from "../providers/session-provider";
 import { getErrorMessage } from "../services/errors";
@@ -111,6 +112,13 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
+      <TouchableOpacity
+        accessibilityRole="button"
+        style={{ paddingHorizontal: 24, paddingBottom: 16 }}
+        onPress={() => router.push("/reservations")}
+      >
+        <Text style={{ color: "#1765ae", fontSize: 17 }}>Mis reservas</Text>
+      </TouchableOpacity>
       {error ? (
         <View style={{ padding: 24, gap: 16 }}>
           <Text accessibilityRole="alert">{error}</Text>
@@ -135,7 +143,17 @@ export default function HomeScreen() {
             </Text>
           }
           renderItem={({ item }) => (
-            <View style={styles.card}>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel={`Ver disponibilidad de ${item.name}`}
+              style={styles.card}
+              onPress={() =>
+                router.push({
+                  pathname: "/rooms/[id]",
+                  params: { id: item.id },
+                })
+              }
+            >
               <Text style={styles.roomName}>{item.name}</Text>
 
               <Text style={styles.description}>{item.description}</Text>
@@ -145,7 +163,10 @@ export default function HomeScreen() {
               <Text style={item.active ? styles.available : styles.unavailable}>
                 {item.active ? "Activo" : "Inactivo"}
               </Text>
-            </View>
+              <Text style={{ color: "#1765ae", marginTop: 12 }}>
+                Ver disponibilidad
+              </Text>
+            </TouchableOpacity>
           )}
         />
       )}
