@@ -147,6 +147,29 @@ describe('RoomsService', () => {
   });
 
   describe('getAvailability', () => {
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-08-31T12:00:00.000Z'));
+    });
+
+    afterEach(() => jest.useRealTimers());
+
+    it('excludes past slots and the exact current hour while keeping future slots bookable', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2031-01-10T16:00:00.000Z'));
+      try {
+        mockPrismaService.room.findUnique.mockResolvedValue({ id: 'room-1', name: 'Room', active: true });
+        mockPrismaService.reservation.findMany.mockResolvedValue([]);
+        mockPrismaService.roomBlock.findMany.mockResolvedValue([]);
+        const today = await service.getAvailability('room-1', '2031-01-10');
+        expect(today.slots.find((slot) => slot.startTime === '09:00')?.available).toBe(false);
+        expect(today.slots.find((slot) => slot.startTime === '10:00')?.available).toBe(false);
+        expect(today.slots.find((slot) => slot.startTime === '11:00')?.available).toBe(true);
+        const yesterday = await service.getAvailability('room-1', '2031-01-09');
+        expect(yesterday.slots.every((slot) => !slot.available)).toBe(true);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('should return 13 hourly slots from 08:00 to 21:00', async () => {
       mockPrismaService.room.findUnique.mockResolvedValue({
         id: 'room-123',

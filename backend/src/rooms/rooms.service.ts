@@ -186,6 +186,7 @@ export class RoomsService {
                     slotEnd.toISOString(),
 
                 available:
+                    slotStart > new Date() &&
                     !occupiedByReservation &&
                     !matchingBlock,
 
