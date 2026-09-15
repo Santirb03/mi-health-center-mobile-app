@@ -22,6 +22,21 @@ webhook signature validation, Stripe settlement, or mobile checkout.
 
 ## Invariants
 
+- PaymentIntent creation holds the same room lock through the fresh reservation /
+  payment read, Stripe request and local persistence. Concurrent callers reuse the
+  persisted intent instead of racing a unique constraint. Terminal payments are
+  rejected, and existing payment status is never reset to PENDING.
+- Creation/retrieval requests use a 5-second Stripe timeout with no SDK retries;
+  the database transaction allows 15 seconds (including advisory-lock waiting),
+  with a 5-second transaction acquisition wait. Contention can still time out and
+  require a client retry. This intentionally trades room-level throughput for a
+  small, consistent critical section; it is not a distributed transaction.
+- If Stripe succeeds but persistence fails, the next eligible attempt reuses the
+  same Stripe idempotency key. No client secret is returned before DB commit.
+  If a hold expires during Stripe I/O, the intent link and expiration commit before
+  the request is rejected, allowing webhook reconciliation. A canceled Stripe
+  intent is rejected; replacement requires a new reservation.
+
 - Confirmation checks reservations and administrative blocks under the same
   room lock as reservation/block creation.
 - Reads before acquiring the lock only locate the room. Payment and reservation

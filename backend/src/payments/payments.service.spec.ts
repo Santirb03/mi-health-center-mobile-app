@@ -44,6 +44,7 @@ describe('PaymentsService', () => {
         },
         payment: {
             findUnique: mockTxPaymentFindUnique,
+            create: mockPaymentCreate,
             update: mockTxPaymentUpdate,
             updateMany: mockTxPaymentUpdateMany,
         },
@@ -85,6 +86,7 @@ describe('PaymentsService', () => {
         mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockTx));
         mockConfigService.get.mockReturnValue('test-stripe-secret');
         mockTxReservationFindUnique.mockImplementation(() => mockReservationFindFirst());
+        mockTxPaymentFindUnique.mockImplementation(() => mockPaymentFindUnique());
 
         jest.useFakeTimers();
         jest.setSystemTime(NOW);
@@ -112,6 +114,42 @@ describe('PaymentsService', () => {
     });
 
     describe('createPaymentIntent', () => {
+        it('keeps the payment link but expires the hold when Stripe responds too late', async () => {
+            mockDoctorFindUnique.mockResolvedValue({ id: 'doctor-123' });
+            mockReservationFindFirst.mockResolvedValue({
+                id: 'reservation-123', doctorId: 'doctor-123', roomId: 'room-123',
+                status: 'PENDING', totalPrice: 350, expiresAt: new Date(NOW.getTime() + 1000),
+            });
+            mockStripePaymentIntentsCreate.mockImplementation(async () => {
+                jest.setSystemTime(new Date(NOW.getTime() + 1001));
+                return { id: 'pi_late', client_secret: 'secret', status: 'requires_payment_method' };
+            });
+            await expect(service.createPaymentIntent('user-123', 'reservation-123')).rejects.toThrow('hold has expired');
+            expect(mockPaymentCreate).toHaveBeenCalledWith(expect.objectContaining({
+                data: expect.objectContaining({ transactionId: 'pi_late' }),
+            }));
+            expect(mockTxReservationUpdate).toHaveBeenCalledWith({
+                where: { id: 'reservation-123' }, data: { status: 'EXPIRED' },
+            });
+            // Error is returned from the callback, not thrown there (which would roll back).
+            await expect(mockPrisma.$transaction.mock.results[0].value).resolves.toEqual({
+                error: 'Reservation payment hold has expired',
+            });
+        });
+
+        it('does not recreate a canceled Stripe intent with the old idempotency key', async () => {
+            mockDoctorFindUnique.mockResolvedValue({ id: 'doctor-123' });
+            mockReservationFindFirst.mockResolvedValue({
+                id: 'reservation-123', doctorId: 'doctor-123', roomId: 'room-123',
+                status: 'PENDING', totalPrice: 350, expiresAt: new Date(NOW.getTime() + 60000),
+            });
+            mockPaymentFindUnique.mockResolvedValue({ id: 'payment-123', status: 'FAILED', transactionId: 'pi_canceled' });
+            mockStripePaymentIntentsRetrieve.mockResolvedValue({ id: 'pi_canceled', status: 'canceled' });
+            await expect(service.createPaymentIntent('user-123', 'reservation-123')).rejects.toThrow('cannot be used');
+            expect(mockStripePaymentIntentsCreate).not.toHaveBeenCalled();
+            expect(mockTxPaymentUpdate).not.toHaveBeenCalled();
+        });
+
         it.each(['CONFIRMED', 'CANCELLED'])('should not expire a reservation that became %s while waiting for the lock', async (status) => {
             mockDoctorFindUnique.mockResolvedValue({ id: 'doctor-123' });
             mockReservationFindFirst.mockResolvedValue({
@@ -119,10 +157,10 @@ describe('PaymentsService', () => {
                 expiresAt: new Date(NOW.getTime() - 1),
             });
             mockTxReservationFindUnique.mockResolvedValue({
-                id: 'reservation-123', status,
+                id: 'reservation-123', doctorId: 'doctor-123', status,
             });
             await expect(service.createPaymentIntent('user-123', 'reservation-123'))
-                .rejects.toThrow('Reservation payment hold has expired');
+                .rejects.toThrow('Only pending reservations can be paid');
             expect(mockTxReservationUpdate).not.toHaveBeenCalled();
             expect(mockReservationUpdate).not.toHaveBeenCalled();
             expect(mockStripePaymentIntentsCreate).not.toHaveBeenCalled();
@@ -193,6 +231,7 @@ describe('PaymentsService', () => {
                 {
                     idempotencyKey:
                         'reservation-reservation-123',
+                    timeout: 5000, maxNetworkRetries: 0,
                 },
             );
 
@@ -346,7 +385,7 @@ describe('PaymentsService', () => {
 
             expect(
                 mockStripePaymentIntentsRetrieve,
-            ).toHaveBeenCalledWith('pi_existing');
+            ).toHaveBeenCalledWith('pi_existing', {}, { timeout: 5000, maxNetworkRetries: 0 });
 
             expect(
                 mockStripePaymentIntentsCreate,

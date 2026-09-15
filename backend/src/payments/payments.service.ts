@@ -28,159 +28,74 @@ export class PaymentsService {
         this.stripe = new Stripe(stripeSecret);
     }
 
-    async createPaymentIntent(
-        userId: string,
-        reservationId: string,
-    ) {
-        const doctor =
-            await this.prisma.doctorProfile.findUnique({
-                where: {
-                    userId,
-                },
-            });
+    async createPaymentIntent(userId: string, reservationId: string) {
+        const doctor = await this.prisma.doctorProfile.findUnique({ where: { userId } });
+        if (!doctor) throw new NotFoundException('Doctor profile not found');
+        const reference = await this.prisma.reservation.findFirst({
+            where: { id: reservationId, doctorId: doctor.id },
+        });
+        if (!reference) throw new NotFoundException('Reservation not found');
 
-        if (!doctor) {
-            throw new NotFoundException(
-                'Doctor profile not found',
-            );
-        }
-
-        const reservation =
-            await this.prisma.reservation.findFirst({
-                where: {
-                    id: reservationId,
-                    doctorId: doctor.id,
-                },
-            });
-
-        if (!reservation) {
-            throw new NotFoundException(
-                'Reservation not found',
-            );
-        }
-
-        if (reservation.status !== 'PENDING') {
-            throw new BadRequestException(
-                'Only pending reservations can be paid',
-            );
-        }
-
-        const now = new Date();
-
-        if (
-            !reservation.expiresAt ||
-            reservation.expiresAt <= now
-        ) {
-            await this.prisma.$transaction(async (tx) => {
-                await tx.$executeRaw`
-                    SELECT pg_advisory_xact_lock(hashtext(${reservation.roomId}))
-                `;
-                // Confirmation or cancellation may have committed while we waited.
-                const current = await tx.reservation.findUnique({
-                    where: { id: reservation.id },
-                });
-                if (current?.status === 'PENDING' &&
-                    (!current.expiresAt || current.expiresAt <= new Date())) {
-                    await tx.reservation.update({
-                        where: { id: current.id },
-                        data: { status: 'EXPIRED' },
-                    });
-                }
-            });
-
-            throw new BadRequestException(
-                'Reservation payment hold has expired',
-            );
-        }
-
-        const existingPayment =
-            await this.prisma.payment.findUnique({
-                where: {
-                    reservationId: reservation.id,
-                },
-            });
-
-        if (existingPayment?.status === 'PAID') {
-            throw new BadRequestException(
-                'Reservation has already been paid',
-            );
-        }
-
-        if (existingPayment?.transactionId) {
-            const existingPaymentIntent =
-                await this.stripe.paymentIntents.retrieve(
-                    existingPayment.transactionId,
-                );
-
-            if (
-                existingPaymentIntent.status !== 'canceled' &&
-                existingPaymentIntent.client_secret
-            ) {
-                return {
-                    clientSecret:
-                        existingPaymentIntent.client_secret,
-                    paymentIntentId:
-                        existingPaymentIntent.id,
-                    expiresAt: reservation.expiresAt,
-                };
+        const result = await this.prisma.$transaction(async (tx) => {
+            // Shared with confirmation, cancellation and booking mutations, across processes.
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${reference.roomId}))`;
+            const reservation = await tx.reservation.findUnique({ where: { id: reservationId } });
+            if (!reservation || reservation.doctorId !== doctor.id) {
+                throw new NotFoundException('Reservation not found');
             }
-        }
+            if (reservation.status !== 'PENDING') {
+                throw new BadRequestException('Only pending reservations can be paid');
+            }
+            const expire = async () => {
+                await tx.reservation.update({
+                    where: { id: reservation.id }, data: { status: 'EXPIRED' },
+                });
+                return { error: 'Reservation payment hold has expired' } as const;
+            };
+            if (!reservation.expiresAt || reservation.expiresAt <= new Date()) return expire();
 
-        const amountInCents = Math.round(
-            Number(reservation.totalPrice) * 100,
-        );
-
-        if (amountInCents <= 0) {
-            throw new BadRequestException(
-                'Payment amount must be greater than zero',
-            );
-        }
-
-        const paymentIntent =
-            await this.stripe.paymentIntents.create(
-                {
-                    amount: amountInCents,
-                    currency: 'mxn',
-                    metadata: {
-                        reservationId: reservation.id,
-                        doctorId: doctor.id,
-                    },
-                },
-                {
-                    idempotencyKey:
-                        `reservation-${reservation.id}`,
-                },
-            );
-
-        if (existingPayment) {
-            await this.prisma.payment.update({
-                where: {
-                    id: existingPayment.id,
-                },
-                data: {
-                    amount: reservation.totalPrice,
-                    status: 'PENDING',
-                    provider: 'stripe',
-                    transactionId: paymentIntent.id,
-                },
-            });
-        } else {
-            await this.prisma.payment.create({
-                data: {
-                    reservationId: reservation.id,
-                    amount: reservation.totalPrice,
-                    status: 'PENDING',
-                    provider: 'stripe',
-                    transactionId: paymentIntent.id,
-                },
-            });
-        }
-
-        return {
-            clientSecret: paymentIntent.client_secret,
-            paymentIntentId: paymentIntent.id,
-            expiresAt: reservation.expiresAt,
-        };
+            const existing = await tx.payment.findUnique({ where: { reservationId } });
+            if (existing?.status === 'PAID' || existing?.status === 'REFUNDED') {
+                throw new BadRequestException('Reservation payment is already settled');
+            }
+            // Bound external I/O while holding the room lock. A retry uses the same
+            // Stripe idempotency key if Stripe succeeded but the DB did not commit.
+            const options = { timeout: 5000, maxNetworkRetries: 0 };
+            let intent: Stripe.PaymentIntent;
+            if (existing?.transactionId) {
+                intent = await this.stripe.paymentIntents.retrieve(existing.transactionId, {}, options);
+            } else {
+                const amount = Math.round(Number(reservation.totalPrice) * 100);
+                if (!Number.isSafeInteger(amount) || amount <= 0) {
+                    throw new BadRequestException('Payment amount must be greater than zero');
+                }
+                intent = await this.stripe.paymentIntents.create({
+                    amount, currency: 'mxn',
+                    metadata: { reservationId, doctorId: doctor.id },
+                }, { ...options, idempotencyKey: `reservation-${reservationId}` });
+                const data = {
+                    amount: reservation.totalPrice, provider: 'stripe', transactionId: intent.id,
+                };
+                if (existing) {
+                    // Do not reset status: failure events may be delivered independently.
+                    await tx.payment.update({ where: { id: existing.id }, data });
+                } else {
+                    await tx.payment.create({ data: { ...data, reservationId, status: 'PENDING' } });
+                }
+            }
+            // Keep the link for webhook reconciliation even if the hold expired
+            // during Stripe I/O. Return the error only AFTER committing expiration.
+            if (reservation.expiresAt <= new Date()) return expire();
+            if (intent.status === 'canceled' || !intent.client_secret) {
+                return { error: 'Payment intent cannot be used; create a new reservation' } as const;
+            }
+            return {
+                clientSecret: intent.client_secret, paymentIntentId: intent.id,
+                expiresAt: reservation.expiresAt,
+            };
+        }, { maxWait: 5000, timeout: 15000 });
+        if ('error' in result) throw new BadRequestException(result.error);
+        return result;
     }
 
     async handleStripeWebhook(event: Stripe.Event) {

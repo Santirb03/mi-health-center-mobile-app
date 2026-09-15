@@ -26,6 +26,8 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
   let reservations: ReservationsService;
   let rooms: RoomsService;
   const refund = jest.fn();
+  const createIntent = jest.fn();
+  const retrieveIntent = jest.fn();
 
   beforeAll(async () => {
     prisma = new PrismaService();
@@ -40,17 +42,20 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
     (payments as unknown as { stripe: unknown }).stripe = {
       refunds: { create: refund },
       paymentIntents: {
-        create: jest.fn(() => {
-          throw new Error('Unexpected external payment creation');
-        }),
+        create: createIntent,
+        retrieve: retrieveIntent,
       },
     };
   });
-  beforeEach(() =>
+  beforeEach(() => {
+    createIntent.mockReset().mockImplementation(() => { throw new Error('Unexpected Stripe creation'); });
+    retrieveIntent.mockReset().mockImplementation(async (id: string) => ({
+      id, client_secret: `secret_${id}`, status: 'requires_payment_method',
+    }));
     refund
       .mockReset()
-      .mockResolvedValue({ id: 're_test', status: 'succeeded' }),
-  );
+      .mockResolvedValue({ id: 're_test', status: 'succeeded' });
+  });
   afterAll(async () => {
     await prisma?.$disconnect();
   });
@@ -150,6 +155,62 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
       include: { payment: true },
     });
   }
+
+  it('returns one intent and persists one payment for concurrent creation requests', async () => {
+    const f = await fixture(false);
+    await prisma.payment.delete({ where: { id: f.payment.id } });
+    createIntent.mockResolvedValue({ id: f.payment.transactionId, client_secret: `secret_${f.payment.transactionId}`, status: 'requires_payment_method' });
+    const results = await queued(f.room.id, [
+      () => payments.createPaymentIntent(f.user.id, f.reservation.id),
+      () => payments.createPaymentIntent(f.user.id, f.reservation.id),
+    ]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    if (results[0].ok && results[1].ok) expect(results[0].value).toEqual(results[1].value);
+    expect(createIntent).toHaveBeenCalledTimes(1);
+    expect(retrieveIntent).toHaveBeenCalledTimes(1);
+    expect(await prisma.payment.count({ where: { reservationId: f.reservation.id } })).toBe(1);
+  });
+
+  it.each([true, false])('preserves confirmation when creation races a webhook (creation first: %s)', async (creationFirst) => {
+    const f = await fixture(false);
+    const create = () => payments.createPaymentIntent(f.user.id, f.reservation.id);
+    const confirm = () => payments.handleStripeWebhook(f.event);
+    const results = await queued(f.room.id, creationFirst ? [create, confirm] : [confirm, create]);
+    expect(results.map((r) => r.ok)).toEqual(creationFirst ? [true, true] : [true, false]);
+    expect(await state(f.reservation.id)).toMatchObject({ status: 'CONFIRMED', payment: { status: 'PAID' } });
+    expect(createIntent).not.toHaveBeenCalled();
+  });
+
+  it('rejects creation after cancellation wins the room lock', async () => {
+    const f = await fixture(false);
+    const results = await queued(f.room.id, [
+      () => reservations.cancel(f.user.id, f.reservation.id),
+      () => payments.createPaymentIntent(f.user.id, f.reservation.id),
+    ]);
+    expect(results.map((r) => r.ok)).toEqual([true, false]);
+    expect(retrieveIntent).not.toHaveBeenCalled();
+    expect(createIntent).not.toHaveBeenCalled();
+  });
+
+  it.each(['PAID', 'REFUNDED'] as const)('does not replace a %s payment even with a pending reservation', async (status) => {
+    const f = await fixture(false);
+    await prisma.payment.update({ where: { id: f.payment.id }, data: { status } });
+    await expect(payments.createPaymentIntent(f.user.id, f.reservation.id)).rejects.toThrow('already settled');
+    expect((await state(f.reservation.id)).payment!.status).toBe(status);
+    expect(retrieveIntent).not.toHaveBeenCalled();
+  });
+
+  it('rolls back a failed Stripe call and retries using the same idempotency key', async () => {
+    const f = await fixture(false);
+    await prisma.payment.delete({ where: { id: f.payment.id } });
+    createIntent.mockRejectedValueOnce(new Error('Network timeout')).mockResolvedValue({
+      id: f.payment.transactionId, client_secret: 'recovered_secret', status: 'requires_payment_method',
+    });
+    await expect(payments.createPaymentIntent(f.user.id, f.reservation.id)).rejects.toThrow('Network timeout');
+    expect((await state(f.reservation.id)).payment).toBeNull();
+    await expect(payments.createPaymentIntent(f.user.id, f.reservation.id)).resolves.toMatchObject({ paymentIntentId: f.payment.transactionId });
+    expect(createIntent.mock.calls[0][1].idempotencyKey).toBe(createIntent.mock.calls[1][1].idempotencyKey);
+  });
 
   it('refunds an on-time payment whose delayed webhook encounters an administrative block', async () => {
     const f = await fixture();
