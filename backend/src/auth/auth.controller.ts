@@ -1,6 +1,7 @@
 import {
     Body,
     Controller,
+    Get,
     Post,
     Req,
     UseGuards,
@@ -26,6 +27,12 @@ export class AuthController {
     constructor(
         private readonly authService: AuthService,
     ) { }
+
+    @Get('me')
+    @UseGuards(JwtAuthGuard)
+    me(@Req() req: AuthenticatedRequest) {
+        return this.authService.me(req.user.userId);
+    }
 
     @Post('register')
     register(@Body() dto: RegisterDto) {

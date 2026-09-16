@@ -13,6 +13,7 @@ import { router } from "expo-router";
 import { api } from "../services/api";
 import { useSession } from "../providers/session-provider";
 import { getErrorMessage } from "../services/errors";
+import { ReservationNavigation } from '../components/reservation-navigation';
 
 interface Room {
   id: string;
@@ -112,13 +113,7 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        accessibilityRole="button"
-        style={{ paddingHorizontal: 24, paddingBottom: 16 }}
-        onPress={() => router.push("/reservations")}
-      >
-        <Text style={{ color: "#1765ae", fontSize: 17 }}>Mis reservas</Text>
-      </TouchableOpacity>
+      <ReservationNavigation />
       {error ? (
         <View style={{ padding: 24, gap: 16 }}>
           <Text accessibilityRole="alert">{error}</Text>

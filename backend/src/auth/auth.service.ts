@@ -18,6 +18,14 @@ export class AuthService {
         private readonly jwtService: JwtService,
     ) { }
 
+    async me(userId: string) {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId }, select: { id: true, role: true },
+        });
+        if (!user) throw new UnauthorizedException();
+        return user;
+    }
+
     async register(dto: RegisterDto) {
         const existingUser = await this.prisma.user.findUnique({
             where: {

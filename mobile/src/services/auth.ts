@@ -1,5 +1,10 @@
 import { publicApi, session } from "./api";
 import { Tokens } from "./session";
+import type { registrationPayload } from './registration';
+
+export async function register(data: ReturnType<typeof registrationPayload>) {
+  await publicApi.post('/auth/register', data);
+}
 
 export interface LoginData {
   email: string;

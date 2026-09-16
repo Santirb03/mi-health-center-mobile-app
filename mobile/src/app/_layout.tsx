@@ -59,6 +59,7 @@ function SessionNavigator() {
       <Stack.Screen name="index" />
       <Stack.Protected guard={authenticated}>
         <Stack.Screen name="home" />
+        <Stack.Screen name="admin-agenda" options={{ headerShown: true, title: 'Agenda del administrador' }} />
         <Stack.Screen
           name="rooms/[id]"
           options={{ headerShown: true, title: "Consultorio" }}
@@ -74,6 +75,7 @@ function SessionNavigator() {
       </Stack.Protected>
       <Stack.Protected guard={!authenticated}>
         <Stack.Screen name="(auth)/login" />
+        <Stack.Screen name="(auth)/register" />
       </Stack.Protected>
     </Stack>
   );
