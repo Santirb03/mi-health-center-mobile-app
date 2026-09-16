@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from "react-native";
 import { Action, LoadState, Page, styles } from "../components/booking-ui";
 import { useResource } from "../hooks/use-resource";
 import { useNow } from "../hooks/use-now";
+import { RoomBlocksPanel } from "../components/room-blocks-panel";
 import {
   businessDate,
   formatTime,
@@ -179,6 +180,18 @@ function Agenda() {
           ))}
         </View>
       </View>
+      {filters.roomId &&
+      rooms.data?.find((room) => room.id === filters.roomId) ? (
+        <RoomBlocksPanel
+          key={`${filters.roomId}:${filters.date}`}
+          room={rooms.data.find((room) => room.id === filters.roomId)!}
+          date={filters.date}
+        />
+      ) : (
+        <Text style={styles.muted}>
+          Selecciona un consultorio para consultar o gestionar sus bloqueos.
+        </Text>
+      )}
       <Action
         title="Actualizar agenda"
         disabled={agenda.loading}

@@ -10,9 +10,12 @@ import { AuthService } from '../auth/auth.service';
 import { AdminAgendaController } from './admin-agenda.controller';
 import { AdminAgendaService, agendaDay } from './admin-agenda.service';
 import { AdminAccessGuard } from './admin-access.guard';
+import { RoomsController } from '../rooms/rooms.controller';
+import { RoomsService } from '../rooms/rooms.service';
 
 describe('Administrative agenda HTTP boundary', () => {
   let app: INestApplication;
+  const roomsService = { findBlocks: jest.fn(), createBlock: jest.fn(), removeBlock: jest.fn() };
   const jwt = new JwtService({ secret: 'agenda-test-only-secret' });
   const prisma = {
     user: { findUnique: jest.fn() },
@@ -24,12 +27,13 @@ describe('Administrative agenda HTTP boundary', () => {
   }
   beforeAll(async () => {
     const module = await Test.createTestingModule({
-      controllers: [AdminAgendaController, AuthController],
+      controllers: [AdminAgendaController, AuthController, RoomsController],
       providers: [
         AdminAgendaService,
         AdminAccessGuard,
         JwtStrategy,
         AuthService,
+        { provide: RoomsService, useValue: roomsService },
         { provide: JwtService, useValue: jwt },
         { provide: PrismaService, useValue: prisma },
         {
@@ -59,6 +63,19 @@ describe('Administrative agenda HTTP boundary', () => {
   });
   afterAll(async () => {
     await app.close();
+  });
+
+  it.each(['get', 'post', 'delete'] as const)('protects block %s with the current role, not stale token claims', async method => {
+    const path = method === 'delete' ? '/rooms/room/blocks/block' : '/rooms/room/blocks';
+    const body = { startTime: '2031-01-10T14:00:00Z', endTime: '2031-01-10T15:00:00Z', reason: 'Maintenance' };
+    await request(app.getHttpServer())[method](path).send(body).expect(401);
+    prisma.user.findUnique.mockResolvedValue({ role: 'DOCTOR' });
+    await request(app.getHttpServer())[method](path).auth(token(), { type: 'bearer' }).send(body).expect(403);
+    for (const call of Object.values(roomsService)) expect(call).not.toHaveBeenCalled();
+    prisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
+    await request(app.getHttpServer())[method](path).auth(token(), { type: 'bearer' }).send(body).expect(method === 'post' ? 201 : 200);
+    const call = method === 'get' ? roomsService.findBlocks : method === 'post' ? roomsService.createBlock : roomsService.removeBlock;
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it.each(['/admin/agenda?date=2031-01-10', '/admin/rooms', '/auth/me'])(

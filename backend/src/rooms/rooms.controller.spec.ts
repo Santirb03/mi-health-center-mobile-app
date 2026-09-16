@@ -5,6 +5,7 @@ import {
 
 import { RoomsController } from './rooms.controller';
 import { RoomsService } from './rooms.service';
+import { AdminAccessGuard } from '../reservations/admin-access.guard';
 
 describe('RoomsController', () => {
   let controller: RoomsController;
@@ -34,7 +35,7 @@ describe('RoomsController', () => {
               mockRoomsService,
           },
         ],
-      }).compile();
+      }).overrideGuard(AdminAccessGuard).useValue({ canActivate: () => true }).compile();
 
     controller =
       module.get<RoomsController>(

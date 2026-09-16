@@ -19,6 +19,7 @@ import { CreateRoomBlockDto } from './dto/create-room-block.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { AdminAccessGuard } from '../reservations/admin-access.guard';
 
 @Controller('rooms')
 export class RoomsController {
@@ -45,7 +46,7 @@ export class RoomsController {
     @Get(':id/blocks')
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     findBlocks(
@@ -59,7 +60,7 @@ export class RoomsController {
     @Post(':id/blocks')
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     createBlock(
@@ -75,7 +76,7 @@ export class RoomsController {
     @Delete(':id/blocks/:blockId')
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     removeBlock(

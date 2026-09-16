@@ -1,0 +1,204 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Text, TextInput, View } from "react-native";
+import { useFocusEffect } from "expo-router";
+import axios from "axios";
+import { Action, LoadState, styles } from "./booking-ui";
+import { useResource } from "../hooks/use-resource";
+import { businessDate, formatTime } from "../services/booking";
+import { blockInput, blocksOnDate } from "../services/block-form";
+import {
+  createRoomBlock,
+  getRoomBlocks,
+  removeRoomBlock,
+  type RoomBlock,
+} from "../services/room-blocks";
+import type { AgendaRoom } from "../services/admin-agenda";
+import { session } from "../services/api";
+
+export function RoomBlocksPanel({
+  room,
+  date,
+}: {
+  room: AgendaRoom;
+  date: string;
+}) {
+  const read = useCallback(
+    (signal: AbortSignal) => getRoomBlocks(room.id, signal),
+    [room.id],
+  );
+  const blocks = useResource(read);
+  const [start, setStart] = useState("08");
+  const [end, setEnd] = useState("09");
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [removing, setRemoving] = useState<RoomBlock | null>(null);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const active = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      active.current = true;
+      return () => {
+        active.current = false;
+      };
+    }, []),
+  );
+
+  async function mutate(action: "create" | "remove", block?: RoomBlock) {
+    if (inFlight.current || blocks.loading || blocks.error) return;
+    let input;
+    if (action === "create") {
+      if (!room.active) return;
+      try {
+        input = blockInput(date, start, end, reason);
+      } catch (error) {
+        setMessage((error as Error).message);
+        return;
+      }
+    }
+    const version = session.getVersion();
+    const current = () => active.current && session.getVersion() === version;
+    inFlight.current = true;
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (input) await createRoomBlock(room.id, input);
+      else if (block) await removeRoomBlock(room.id, block.id);
+      if (current()) {
+        setMessage(input ? "Bloqueo creado." : "Bloqueo retirado.");
+        setRemoving(null);
+        if (input) setReason("");
+      }
+    } catch (error) {
+      if (current()) {
+        const status = axios.isAxiosError(error)
+          ? error.response?.status
+          : undefined;
+        setMessage(
+          status === 403
+            ? "Ya no tienes permiso para gestionar bloqueos."
+            : status === 400
+              ? "No se pudo crear el bloqueo: revisa el horario; puede existir una reserva vigente u otro bloqueo."
+              : status === 404
+                ? "El consultorio o bloqueo ya no está disponible. La lista se actualizará."
+                : "No pudimos verificar el resultado. Revisa la lista actualizada antes de volver a intentar.",
+        );
+        setRemoving(null);
+      }
+    } finally {
+      if (current()) await blocks.reload();
+      inFlight.current = false;
+      if (mounted.current && session.getVersion() === version) setBusy(false);
+    }
+  }
+  const inputStyle = {
+    borderWidth: 1,
+    borderColor: "#526477",
+    padding: 12,
+    borderRadius: 8,
+  };
+  return (
+    <View style={styles.card}>
+      <Text style={styles.subtitle}>Bloqueos · {room.name}</Text>
+      <Text style={styles.muted}>
+        {date} · Hora de Ciudad de México. Los bloqueos impiden nuevas reservas.
+      </Text>
+      <LoadState {...blocks} />
+      {message && <Text accessibilityRole="alert">{message}</Text>}
+      <Action
+        title="Actualizar bloqueos"
+        disabled={busy || blocks.loading}
+        onPress={() => void blocks.reload()}
+      />
+      {blocks.data && blocksOnDate(blocks.data, date).length === 0 && (
+        <Text>No hay bloqueos para este día.</Text>
+      )}
+      {blocks.data &&
+        blocksOnDate(blocks.data, date).map((block) => (
+          <View key={block.id} style={{ gap: 8, paddingVertical: 12 }}>
+            <Text>
+              {businessDate(new Date(block.startTime))}{" "}
+              {formatTime(block.startTime)} →{" "}
+              {businessDate(new Date(block.endTime))}{" "}
+              {formatTime(block.endTime)}
+            </Text>
+            <Text>{block.reason || "Sin motivo indicado"}</Text>
+            {removing?.id === block.id ? (
+              <>
+                <Text>
+                  ¿Retirar este bloqueo? El horario quedará sujeto a la
+                  disponibilidad de reservas.
+                </Text>
+                <Action
+                  title="Confirmar retiro"
+                  disabled={busy}
+                  onPress={() => void mutate("remove", block)}
+                />
+                <Action
+                  title="Conservar bloqueo"
+                  disabled={busy}
+                  onPress={() => setRemoving(null)}
+                />
+              </>
+            ) : (
+              <Action
+                title="Retirar bloqueo"
+                disabled={busy || blocks.loading}
+                onPress={() => setRemoving(block)}
+              />
+            )}
+          </View>
+        ))}
+      {room.active ? (
+        <>
+          <Text style={styles.subtitle}>Crear bloqueo para {date}</Text>
+          <Text>Hora de inicio (08–20)</Text>
+          <TextInput
+            accessibilityLabel="Hora de inicio del bloqueo"
+            style={inputStyle}
+            value={start}
+            onChangeText={setStart}
+            keyboardType="number-pad"
+            maxLength={2}
+            editable={!busy}
+          />
+          <Text>Hora de fin (09–21)</Text>
+          <TextInput
+            accessibilityLabel="Hora de fin del bloqueo"
+            style={inputStyle}
+            value={end}
+            onChangeText={setEnd}
+            keyboardType="number-pad"
+            maxLength={2}
+            editable={!busy}
+          />
+          <Text>Motivo (opcional)</Text>
+          <TextInput
+            accessibilityLabel="Motivo del bloqueo"
+            style={inputStyle}
+            value={reason}
+            onChangeText={setReason}
+            maxLength={500}
+            editable={!busy}
+          />
+          <Action
+            title={busy ? "Guardando…" : "Crear bloqueo"}
+            disabled={busy || blocks.loading || !!blocks.error || !!removing}
+            onPress={() => void mutate("create")}
+          />
+        </>
+      ) : (
+        <Text>
+          El consultorio está inactivo. Puedes consultar y retirar sus bloqueos.
+        </Text>
+      )}
+    </View>
+  );
+}
