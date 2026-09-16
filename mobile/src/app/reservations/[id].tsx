@@ -5,6 +5,7 @@ import { Action, LoadState, Page, styles } from "../../components/booking-ui";
 import { useResource } from "../../hooks/use-resource";
 import { useNow } from "../../hooks/use-now";
 import { getReservation } from "../../services/reservations";
+import { ReservationPayment } from "../../components/reservation-payment";
 import {
   businessDate,
   formatTime,
@@ -52,7 +53,7 @@ export default function ReservationDetail() {
               </Text>
               <Text style={styles.muted}>
                 El contador es orientativo. Solo el servidor puede confirmar la
-                reserva. El pago aún no está disponible en esta versión.
+                reserva.
               </Text>
             </>
           )}
@@ -61,6 +62,7 @@ export default function ReservationDetail() {
           </Text>
         </View>
       )}
+      <ReservationPayment key={id} id={id} reservation={reservation} refresh={resource.reload} />
       <Action
         title="Actualizar estado"
         disabled={resource.loading}

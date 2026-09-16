@@ -1,11 +1,12 @@
 import { Stack } from "expo-router";
 import { ActivityIndicator, Alert, Button, Text, View } from "react-native";
 import { SessionProvider, useSession } from "../providers/session-provider";
+import { PaymentProvider } from "../providers/payment-provider";
 
 export default function RootLayout() {
   return (
     <SessionProvider>
-      <SessionNavigator />
+      <PaymentProvider><SessionNavigator /></PaymentProvider>
     </SessionProvider>
   );
 }

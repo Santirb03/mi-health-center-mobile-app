@@ -24,7 +24,7 @@ or database writes are made by these mobile tests.
 - Pending holds past expiresAt are labelled as expired locally. Stored status is
   not rewritten: a delayed payment webhook may still need to reconcile it.
 - The countdown uses device time and is explicitly advisory. Refresh reads server
-  status. There is no checkout, automatic payment, or cancellation in this flow.
+  status. Test checkout is now available from reservation details; see PAYMENT_TESTS.md.
 
 ## Device acceptance checks (manual)
 

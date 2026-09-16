@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.18",
+    "@stripe/stripe-react-native": "0.64.0",
     "axios": "^1.19.0",
     "expo": "^57.0.17",
     "expo-constants": "~57.0.18",
@@ -41,7 +42,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "node --test test/session.test.cjs test/booking.test.cjs"
+    "test": "node --test test/session.test.cjs test/booking.test.cjs test/checkout.test.cjs"
   },
   "private": true
 }

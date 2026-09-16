@@ -255,8 +255,8 @@ export default function RoomDetail() {
                 <>
                   <Text>
                     Se creará una retención de hasta 8 minutos, pendiente de
-                    pago. Esta versión todavía no permite pagar y no confirma el
-                    consultorio.
+                    pago. Después podrás pagar desde el detalle de tu reserva.
+                    El consultorio se confirma cuando el servidor valida el pago.
                   </Text>
                   <Action
                     title={

@@ -5,6 +5,7 @@ import { Action, LoadState, Page, styles } from "../../components/booking-ui";
 import { useResource } from "../../hooks/use-resource";
 import { useNow } from "../../hooks/use-now";
 import { getReservations } from "../../services/reservations";
+import { canPay } from "../../services/checkout";
 import {
   businessDate,
   formatTime,
@@ -48,7 +49,7 @@ export default function Reservations() {
             <Text>{reservationLabel(item, now)}</Text>
             <Text>{money(item.totalPrice)} MXN</Text>
             <Action
-              title="Ver reserva"
+              title={canPay(item, now) ? "Ver reserva y pagar" : "Ver reserva"}
               onPress={() =>
                 router.push({
                   pathname: "/reservations/[id]",
