@@ -201,6 +201,10 @@ export class ReservationsService {
              * may have waited behind another transaction.
              */
             const lockedNow = new Date();
+            const currentRoom = await tx.room.findUnique({ where: { id: room.id } });
+            if (!currentRoom || !currentRoom.active) {
+                throw new NotFoundException('Room not found or inactive');
+            }
 
             if (startTime <= lockedNow) {
                 throw new BadRequestException(
@@ -274,8 +278,9 @@ export class ReservationsService {
                 (1000 * 60 * 60);
 
             const totalPrice =
-                Number(room.pricePerHour) *
+                Number(currentRoom.pricePerHour) *
                 durationInHours;
+            if (totalPrice > 99999999.99) throw new BadRequestException('Reservation total exceeds supported amount');
 
             const expiresAt = new Date(
                 lockedNow.getTime() +

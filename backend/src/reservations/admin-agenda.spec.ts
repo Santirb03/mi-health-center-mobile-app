@@ -15,7 +15,7 @@ import { RoomsService } from '../rooms/rooms.service';
 
 describe('Administrative agenda HTTP boundary', () => {
   let app: INestApplication;
-  const roomsService = { findBlocks: jest.fn(), createBlock: jest.fn(), removeBlock: jest.fn() };
+  const roomsService = { findBlocks: jest.fn(), createBlock: jest.fn(), removeBlock: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() };
   const jwt = new JwtService({ secret: 'agenda-test-only-secret' });
   const prisma = {
     user: { findUnique: jest.fn() },
@@ -63,6 +63,27 @@ describe('Administrative agenda HTTP boundary', () => {
   });
   afterAll(async () => {
     await app.close();
+  });
+
+  it.each(['post', 'patch', 'delete'] as const)('protects room management %s against revoked roles', async method => {
+    const path = method === 'post' ? '/rooms' : '/rooms/room';
+    const body = method === 'post' ? { name: 'Room', pricePerHour: 250.50 } : { active: true };
+    await request(app.getHttpServer())[method](path).send(body).expect(401);
+    prisma.user.findUnique.mockResolvedValue({ role: 'DOCTOR' });
+    await request(app.getHttpServer())[method](path).auth(token(), { type: 'bearer' }).send(body).expect(403);
+    prisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
+    await request(app.getHttpServer())[method](path).auth(token(), { type: 'bearer' }).send(body).expect(method === 'post' ? 201 : 200);
+    expect(method === 'post' ? roomsService.create : method === 'patch' ? roomsService.update : roomsService.remove).toHaveBeenCalledTimes(1);
+  });
+  it.each([0, -1, 1.001, 100000000, '250', null])('rejects invalid room price %s', async pricePerHour => {
+    for (const method of ['post', 'patch'] as const) {
+      await request(app.getHttpServer())[method](method === 'post' ? '/rooms' : '/rooms/room').auth(token(), { type: 'bearer' }).send({ name: 'Room', pricePerHour }).expect(400);
+    }
+    expect(roomsService.create).not.toHaveBeenCalled(); expect(roomsService.update).not.toHaveBeenCalled();
+  });
+  it('rejects whitespace names and non-boolean activation', async () => {
+    await request(app.getHttpServer()).post('/rooms').auth(token(), { type: 'bearer' }).send({ name: '  ', pricePerHour: 250 }).expect(400);
+    for (const active of ['false', null]) await request(app.getHttpServer()).patch('/rooms/room').auth(token(), { type: 'bearer' }).send({ active }).expect(400);
   });
 
   it.each(['get', 'post', 'delete'] as const)('protects block %s with the current role, not stale token claims', async method => {

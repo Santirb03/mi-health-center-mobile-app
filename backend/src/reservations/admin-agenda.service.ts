@@ -23,7 +23,7 @@ export class AdminAgendaService {
 
   rooms() {
     return this.prisma.room.findMany({
-      select: { id: true, name: true, active: true },
+      select: { id: true, name: true, active: true, description: true, pricePerHour: true },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
   }

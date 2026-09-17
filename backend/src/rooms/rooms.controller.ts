@@ -17,7 +17,6 @@ import { UpdateRoomDto } from './dto/update-room.dto';
 import { CreateRoomBlockDto } from './dto/create-room-block.dto';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AdminAccessGuard } from '../reservations/admin-access.guard';
 
@@ -99,7 +98,7 @@ export class RoomsController {
     @Post()
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     create(
@@ -111,7 +110,7 @@ export class RoomsController {
     @Patch(':id')
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     update(
@@ -127,7 +126,7 @@ export class RoomsController {
     @Delete(':id')
     @UseGuards(
         JwtAuthGuard,
-        RolesGuard,
+        AdminAccessGuard,
     )
     @Roles('ADMIN')
     remove(

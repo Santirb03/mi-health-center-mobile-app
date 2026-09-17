@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import axios from "axios";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { api } from "../services/api";
 import { useSession } from "../providers/session-provider";
 import { getErrorMessage } from "../services/errors";
@@ -84,10 +84,10 @@ export default function HomeScreen() {
     }
   }, []);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     void loadRooms();
     return () => request.current?.abort();
-  }, [loadRooms]);
+  }, [loadRooms]));
 
   if (loading) {
     return (

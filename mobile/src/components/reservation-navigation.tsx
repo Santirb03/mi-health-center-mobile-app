@@ -10,10 +10,13 @@ export function ReservationNavigation() {
     <View style={{ paddingHorizontal: 24, paddingBottom: 16, gap: 8 }}>
       <LoadState {...user} />
       {user.data?.role === "ADMIN" && (
+        <>
         <Action
           title="Agenda del administrador"
           onPress={() => router.push("/admin-agenda")}
         />
+        <Action title="Gestionar consultorios" onPress={() => router.push('/admin-rooms')} />
+        </>
       )}
       {user.data?.role === "DOCTOR" && (
         <Action

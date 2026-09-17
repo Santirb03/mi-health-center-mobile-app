@@ -228,27 +228,15 @@ export class RoomsService {
         id: string,
         dto: UpdateRoomDto,
     ) {
-        await this.findOne(id);
-
-        return this.prisma.room.update({
-            where: {
-                id,
-            },
-            data: dto,
+        return this.prisma.$transaction(async tx => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))`;
+            if (!await tx.room.findUnique({ where: { id } })) throw new NotFoundException('Room not found');
+            return tx.room.update({ where: { id }, data: dto });
         });
     }
 
     async remove(id: string) {
-        await this.findOne(id);
-
-        return this.prisma.room.update({
-            where: {
-                id,
-            },
-            data: {
-                active: false,
-            },
-        });
+        return this.update(id, { active: false });
     }
 
     async createBlock(

@@ -42,7 +42,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit --incremental false",
-    "test": "node --test test/session.test.cjs test/booking.test.cjs test/checkout.test.cjs test/registration.test.cjs test/blocks.test.cjs"
+    "test": "node --test test/session.test.cjs test/booking.test.cjs test/checkout.test.cjs test/registration.test.cjs test/blocks.test.cjs test/room-form.test.cjs"
   },
   "private": true
 }
