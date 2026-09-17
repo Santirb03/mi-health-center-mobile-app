@@ -98,7 +98,9 @@ describe('Backend adversarial audit E2E', () => {
       }),
     );
 
-    await app.init();
+    // Own the listener for the entire suite. Otherwise Supertest's first
+    // concurrent request can close it while other requests are still running.
+    await app.listen(0, '127.0.0.1');
 
     prisma = app.get(PrismaService);
 
@@ -674,8 +676,12 @@ describe('Backend adversarial audit E2E', () => {
             }),
       );
 
-      const responses = await Promise.all(
+      const results = await Promise.allSettled(
         concurrentRequests,
+      );
+      // Drain every request before assertions can trigger database cleanup.
+      const responses = results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value] : [],
       );
 
       for (const response of responses) {
@@ -683,6 +689,8 @@ describe('Backend adversarial audit E2E', () => {
           reservationIds.push(response.body.id);
         }
       }
+
+      expect(results.filter((result) => result.status === 'rejected')).toEqual([]);
 
       const successfulResponses = responses.filter(
         (response) => response.status === 201,
