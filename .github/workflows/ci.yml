@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend types, tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:1/ci_unused
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx --no-install prisma generate
+      - run: npx --no-install prisma validate
+      - run: npm run typecheck
+      - run: npm test -- --runInBand
+      - run: npm run build
+
+  integration:
+    name: PostgreSQL (${{ matrix.suite }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [payments, auth, e2e]
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: postgresql://unused:unused@127.0.0.1:1/ci_unused
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npx --no-install prisma generate
+      - name: Run isolated suite
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          case "$SUITE" in
+            payments) npm run test:payments:integration ;;
+            auth) npm run test:auth:integration ;;
+            e2e) npm run test:e2e ;;
+          esac
+
+  mobile:
+    name: Mobile types, tests and bundles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile
+    env:
+      CI: 'true'
+      EXPO_NO_DOTENV: '1'
+      EXPO_NO_TELEMETRY: '1'
+      EXPO_PUBLIC_API_URL: https://api.invalid
+      EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY: ''
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npx --no-install expo export --platform all --output-dir .expo/ci-export
+      - run: npm run typecheck

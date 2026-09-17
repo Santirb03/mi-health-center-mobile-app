@@ -7,6 +7,7 @@ const { Client } = require('pg');
 
 const root = path.resolve(__dirname, '..');
 const authOnly = process.argv.includes('--auth');
+const e2eOnly = process.argv.includes('--e2e');
 const name = `mhc-payment-tests-${randomUUID()}`;
 const password = randomUUID();
 let started = false;
@@ -77,14 +78,22 @@ async function main() {
     await client.end();
   }
   console.log(
-    authOnly ? 'Running auth concurrency regressions against disposable PostgreSQL 16.' : 'Running payment regressions against disposable PostgreSQL 16 (Stripe mocked).',
+    e2eOnly
+      ? 'Running HTTP E2E against disposable PostgreSQL 16 (Stripe mocked).'
+      : authOnly
+        ? 'Running auth concurrency regressions against disposable PostgreSQL 16.'
+        : 'Running payment regressions against disposable PostgreSQL 16 (Stripe mocked).',
   );
   const result = spawnSync(
     process.execPath,
     [
       require.resolve('jest/bin/jest'),
       '--config',
-      authOnly ? 'test/jest-auth-integration.json' : 'test/jest-payment-integration.json',
+      e2eOnly
+        ? 'test/jest-e2e.json'
+        : authOnly
+          ? 'test/jest-auth-integration.json'
+          : 'test/jest-payment-integration.json',
       '--runInBand',
       '--no-cache',
     ],
@@ -96,7 +105,13 @@ async function main() {
         DATABASE_URL: databaseUrl,
         PAYMENT_INTEGRATION_ISOLATED: '1',
         AUTH_INTEGRATION_ISOLATED: authOnly ? '1' : '0',
+        E2E_INTEGRATION_ISOLATED: e2eOnly ? '1' : '0',
+        NODE_ENV: 'test',
+        JWT_SECRET: 'isolated-tests-only-secret',
+        STRIPE_SECRET_KEY: 'sk_test_isolated_unused',
+        STRIPE_WEBHOOK_SECRET: 'whsec_isolated_unused',
       },
+      timeout: 300000,
     },
   );
   if (result.error) throw result.error;

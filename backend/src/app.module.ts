@@ -12,6 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      ignoreEnvFile: process.env.E2E_INTEGRATION_ISOLATED === '1',
     }),
     PrismaModule,
     AuthModule,
