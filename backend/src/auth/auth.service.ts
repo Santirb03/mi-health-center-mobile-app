@@ -96,6 +96,7 @@ export class AuthService {
         userId: string,
         email: string,
         role: string,
+        expectedRefreshHash?: string,
     ) {
         const accessToken = await this.jwtService.signAsync(
             {
@@ -125,14 +126,20 @@ export class AuthService {
 
         const refreshTokenHash = await argon2.hash(refreshToken);
 
-        await this.prisma.user.update({
-            where: {
-                id: userId,
-            },
-            data: {
-                refreshTokenHash,
-            },
-        });
+        if (expectedRefreshHash !== undefined) {
+            // Atomic compare-and-swap: a competing refresh, login or logout
+            // changes the hash and makes this stale rotation fail.
+            const result = await this.prisma.user.updateMany({
+                where: { id: userId, refreshTokenHash: expectedRefreshHash },
+                data: { refreshTokenHash },
+            });
+            if (result.count !== 1) throw new UnauthorizedException('Invalid refresh token');
+        } else {
+            // An explicit password login starts a new session.
+            await this.prisma.user.update({
+                where: { id: userId }, data: { refreshTokenHash },
+            });
+        }
 
         return {
             accessToken,
@@ -141,54 +148,25 @@ export class AuthService {
     }
 
     async refresh(refreshToken: string) {
-        try {
-            const payload = await this.jwtService.verifyAsync<{
-                sub: string;
-                email: string;
-                role: string;
-                type: string;
-                jti: string;
-            }>(refreshToken);
-
-            if (payload.type !== 'refresh') {
-                throw new UnauthorizedException(
-                    'Invalid refresh token',
-                );
-            }
-
-            const user = await this.prisma.user.findUnique({
-                where: {
-                    id: payload.sub,
-                },
-            });
-
-            if (!user || !user.refreshTokenHash) {
-                throw new UnauthorizedException(
-                    'Invalid refresh token',
-                );
-            }
-
-            const tokenValid = await argon2.verify(
-                user.refreshTokenHash,
-                refreshToken,
-            );
-
-            if (!tokenValid) {
-                throw new UnauthorizedException(
-                    'Invalid refresh token',
-                );
-            }
-
-            return await this.generateTokens(
-                user.id,
-                user.email,
-                user.role,
-            );
-        } catch {
-            throw new UnauthorizedException(
-                'Invalid refresh token',
-            );
+        if (typeof refreshToken !== 'string' || !refreshToken) {
+            throw new UnauthorizedException('Invalid refresh token');
         }
+        let payload: { sub: string; type: string };
+        try {
+            payload = await this.jwtService.verifyAsync(refreshToken);
+        } catch {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+        if (payload?.type !== 'refresh' || typeof payload.sub !== 'string' || !payload.sub) {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
+        // Storage/signing failures must remain server errors, not a false 401
+        // that would make mobile discard a potentially valid session.
+        const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+        if (!user?.refreshTokenHash) throw new UnauthorizedException('Invalid refresh token');
+        const tokenValid = await argon2.verify(user.refreshTokenHash, refreshToken);
+        if (!tokenValid) throw new UnauthorizedException('Invalid refresh token');
+        return this.generateTokens(user.id, user.email, user.role, user.refreshTokenHash);
     }
 
     async logout(userId: string) {

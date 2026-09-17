@@ -17,6 +17,7 @@ describe('AuthService', () => {
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
     },
   };
 
@@ -27,6 +28,7 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -365,9 +367,10 @@ describe('AuthService', () => {
         refreshToken: 'new-refresh-token',
       });
 
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
         where: {
           id: 'user-123',
+          refreshTokenHash: storedHash,
         },
         data: {
           refreshTokenHash: expect.any(String),
@@ -461,6 +464,43 @@ describe('AuthService', () => {
       );
 
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rotation failures', () => {
+    async function ready() {
+      const hash = await argon2.hash('old-refresh');
+      mockJwtService.verifyAsync.mockResolvedValue({ sub: 'user-123', type: 'refresh' });
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-123', email: 'doctor@test.com', role: 'DOCTOR', refreshTokenHash: hash });
+      mockJwtService.signAsync.mockResolvedValue('new-token');
+    }
+
+    it('rejects a lost conditional update without overwriting the current session', async () => {
+      await ready();
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.refresh('old-refresh')).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('does not turn a database read failure into unauthorized', async () => {
+      await ready();
+      const failure = new Error('Database unavailable');
+      mockPrisma.user.findUnique.mockRejectedValueOnce(failure);
+      await expect(service.refresh('old-refresh')).rejects.toBe(failure);
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('does not turn a database write failure into unauthorized', async () => {
+      await ready();
+      const failure = new Error('Database unavailable');
+      mockPrisma.user.updateMany.mockRejectedValueOnce(failure);
+      await expect(service.refresh('old-refresh')).rejects.toBe(failure);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing token before reading the database', async () => {
+      await expect(service.refresh(undefined as any)).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
   });
 

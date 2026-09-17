@@ -6,6 +6,7 @@ const path = require('node:path');
 const { Client } = require('pg');
 
 const root = path.resolve(__dirname, '..');
+const authOnly = process.argv.includes('--auth');
 const name = `mhc-payment-tests-${randomUUID()}`;
 const password = randomUUID();
 let started = false;
@@ -76,14 +77,14 @@ async function main() {
     await client.end();
   }
   console.log(
-    'Running payment regressions against disposable PostgreSQL 16 (Stripe mocked).',
+    authOnly ? 'Running auth concurrency regressions against disposable PostgreSQL 16.' : 'Running payment regressions against disposable PostgreSQL 16 (Stripe mocked).',
   );
   const result = spawnSync(
     process.execPath,
     [
       require.resolve('jest/bin/jest'),
       '--config',
-      'test/jest-payment-integration.json',
+      authOnly ? 'test/jest-auth-integration.json' : 'test/jest-payment-integration.json',
       '--runInBand',
       '--no-cache',
     ],
@@ -94,6 +95,7 @@ async function main() {
         ...process.env,
         DATABASE_URL: databaseUrl,
         PAYMENT_INTEGRATION_ISOLATED: '1',
+        AUTH_INTEGRATION_ISOLATED: authOnly ? '1' : '0',
       },
     },
   );
