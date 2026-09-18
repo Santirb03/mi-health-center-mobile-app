@@ -1,6 +1,18 @@
+import { isIP } from 'node:net';
+
 /** Validate at startup; errors contain variable names, never their values. */
 export function validateEnvironment(config: Record<string, unknown>) {
   const errors: string[] = [];
+  if (
+    config.TRUST_PROXY_IPS !== undefined &&
+    (typeof config.TRUST_PROXY_IPS !== 'string' ||
+      (config.TRUST_PROXY_IPS !== '' &&
+        !config.TRUST_PROXY_IPS.split(',').every((ip) => isIP(ip.trim()))))
+  ) {
+    errors.push(
+      'TRUST_PROXY_IPS: expected a comma-separated list of proxy IP addresses',
+    );
+  }
   const required = (name: string): string => {
     const value = config[name];
     if (typeof value !== 'string' || !value.trim()) {

@@ -5,6 +5,7 @@ import {
 
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { AuthRateLimitModule } from './auth-rate-limit.module';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -22,6 +23,7 @@ describe('AuthController', () => {
     const module: TestingModule =
       await Test.createTestingModule({
         controllers: [AuthController],
+        imports: [AuthRateLimitModule],
         providers: [
           {
             provide: AuthService,

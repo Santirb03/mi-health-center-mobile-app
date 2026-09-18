@@ -1,4 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { AuthRateLimitModule } from '../auth/auth-rate-limit.module';
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -27,6 +28,7 @@ describe('Administrative agenda HTTP boundary', () => {
   }
   beforeAll(async () => {
     const module = await Test.createTestingModule({
+      imports: [AuthRateLimitModule],
       controllers: [AdminAgendaController, AuthController, RoomsController],
       providers: [
         AdminAgendaService,

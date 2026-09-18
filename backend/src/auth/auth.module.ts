@@ -12,9 +12,11 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthController } from './auth.controller';
 
 import { AuthService } from './auth.service';
+import { AuthRateLimitModule } from './auth-rate-limit.module';
 
 @Module({
   imports: [
+    AuthRateLimitModule,
     ConfigModule,
 
     JwtModule.registerAsync({

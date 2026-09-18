@@ -8,6 +8,22 @@ const valid = {
 };
 
 describe('server configuration', () => {
+  it('only accepts explicit proxy IP addresses', () => {
+    for (const TRUST_PROXY_IPS of [
+      'true',
+      '*',
+      '1',
+      'localhost',
+      '127.0.0.1,',
+    ]) {
+      expect(() => validateEnvironment({ ...valid, TRUST_PROXY_IPS })).toThrow(
+        'TRUST_PROXY_IPS',
+      );
+    }
+    expect(() =>
+      validateEnvironment({ ...valid, TRUST_PROXY_IPS: '127.0.0.1, ::1' }),
+    ).not.toThrow();
+  });
   it('defaults to development and a numeric port without altering secrets', () => {
     expect(validateEnvironment(valid)).toEqual({
       ...valid,
