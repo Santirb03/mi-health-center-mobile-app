@@ -9,6 +9,7 @@ import { ReservationsModule } from './reservations/reservations.module';
 import { PatientsModule } from './patients/patients.module';
 import { PaymentsModule } from './payments/payments.module';
 import { validateEnvironment } from './config/environment';
+import { HealthController } from './health/health.controller';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -23,7 +24,7 @@ import { validateEnvironment } from './config/environment';
     PatientsModule,
     PaymentsModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule { }

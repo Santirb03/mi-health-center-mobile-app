@@ -64,6 +64,13 @@ describe('Backend E2E', () => {
     roomId = room.id;
   });
 
+  it('reports readiness using the disposable PostgreSQL database', async () => {
+    await request(app.getHttpServer())
+      .get('/health/ready')
+      .expect('Cache-Control', 'no-store')
+      .expect(200, { status: 'ok', database: 'up' });
+  });
+
   afterAll(async () => {
     if (patientId) {
       await prisma.patient.delete({
