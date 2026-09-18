@@ -8,6 +8,7 @@ const { Client } = require('pg');
 const root = path.resolve(__dirname, '..');
 const authOnly = process.argv.includes('--auth');
 const e2eOnly = process.argv.includes('--e2e');
+const deploymentOnly = process.argv.includes('--deployment');
 const name = `mhc-payment-tests-${randomUUID()}`;
 const password = randomUUID();
 let started = false;
@@ -62,6 +63,16 @@ async function main() {
     }
   }
   if (!client) throw new Error('Disposable PostgreSQL did not become ready');
+  if (deploymentOnly) {
+    await client.end();
+    const result = spawnSync(process.execPath, ['test/deployment-smoke.cjs'], {
+      cwd: root, stdio: 'inherit', timeout: 240000,
+      env: { ...process.env, DATABASE_URL: databaseUrl, DEPLOYMENT_TEST_ISOLATED: '1' },
+    });
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 1;
+    return;
+  }
   try {
     const migrations = path.join(root, 'prisma', 'migrations');
     for (const entry of readdirSync(migrations, { withFileTypes: true })

@@ -5,7 +5,7 @@
 ## Qué revisa
 
 - Backend: generación y validación de Prisma, tipos, pruebas unitarias y compilación.
-- PostgreSQL: tres trabajos independientes para pagos, concurrencia de sesiones y flujos HTTP E2E.
+- PostgreSQL: trabajos independientes para pagos, concurrencia de sesiones, flujos HTTP E2E y ensayo de despliegue (migraciones Prisma y arranque compilado).
 - Mobile: pruebas, exportación de bundles Android/iOS/web y tipos. La exportación no sustituye una compilación nativa ni las pruebas en un teléfono.
 
 Cada suite de integración crea su propio contenedor PostgreSQL 16, aplica las migraciones y elimina el contenedor al terminar. Requiere Docker. Stripe está simulado: no se necesitan secretos de GitHub ni una cuenta de Stripe.
