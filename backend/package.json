@@ -4,6 +4,11 @@
   "description": "",
   "author": "",
   "private": true,
+  "overrides": {
+    "@nestjs/platform-express": {
+      "multer": "2.3.0"
+    }
+  },
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
