@@ -363,8 +363,7 @@ describe('RoomsService', () => {
         expect.objectContaining({
           available: false,
           blocked: true,
-          blockReason:
-            'Maintenance',
+          blockReason: null,
         }),
       );
 
@@ -374,8 +373,7 @@ describe('RoomsService', () => {
         expect.objectContaining({
           available: false,
           blocked: true,
-          blockReason:
-            'Maintenance',
+          blockReason: null,
         }),
       );
 
@@ -491,7 +489,6 @@ describe('RoomsService', () => {
           id: true,
           startTime: true,
           endTime: true,
-          reason: true,
         },
       });
     });

@@ -349,7 +349,7 @@ describe('Backend adversarial audit E2E', () => {
       blockIds.push(blockId);
     });
 
-    it('should mark the blocked slot unavailable with its reason', async () => {
+    it('should hide administrative notes in public availability but preserve admin access', async () => {
       const response = await request(
         app.getHttpServer(),
       )
@@ -366,9 +366,23 @@ describe('Backend adversarial audit E2E', () => {
       expect(slot).toBeDefined();
       expect(slot?.available).toBe(false);
       expect(slot?.blocked).toBe(true);
-      expect(slot?.blockReason).toBe(
-        'Maintenance audit',
-      );
+      expect(slot?.blockReason).toBeNull();
+      expect(JSON.stringify(response.body)).not.toContain('Maintenance audit');
+
+      await request(app.getHttpServer())
+        .get(`/rooms/${roomId}/blocks`)
+        .expect(401);
+      await request(app.getHttpServer())
+        .get(`/rooms/${roomId}/blocks`)
+        .set('Authorization', `Bearer ${doctorAccessToken}`)
+        .expect(403);
+      const adminResponse = await request(app.getHttpServer())
+        .get(`/rooms/${roomId}/blocks`)
+        .set('Authorization', `Bearer ${adminAccessToken}`)
+        .expect(200);
+      expect(adminResponse.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: blockId, reason: 'Maintenance audit' }),
+      ]));
     });
 
     it('should reject a reservation that overlaps a room block', async () => {

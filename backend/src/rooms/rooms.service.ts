@@ -129,7 +129,6 @@ export class RoomsService {
                     id: true,
                     startTime: true,
                     endTime: true,
-                    reason: true,
                 },
             });
 
@@ -193,9 +192,8 @@ export class RoomsService {
                 blocked:
                     Boolean(matchingBlock),
 
-                blockReason:
-                    matchingBlock?.reason ??
-                    null,
+                // Keep the public response compatible without exposing admin notes.
+                blockReason: null,
             });
         }
 
