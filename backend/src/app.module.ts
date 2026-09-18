@@ -8,10 +8,12 @@ import { RoomsModule } from './rooms/rooms.module';
 import { ReservationsModule } from './reservations/reservations.module';
 import { PatientsModule } from './patients/patients.module';
 import { PaymentsModule } from './payments/payments.module';
+import { validateEnvironment } from './config/environment';
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
+      validate: validateEnvironment,
       ignoreEnvFile: process.env.E2E_INTEGRATION_ISOLATED === '1',
     }),
     PrismaModule,
