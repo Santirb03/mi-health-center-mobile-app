@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { router } from 'expo-router';
 import {
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
-  View,
 } from "react-native";
 
 import axios from "axios";
@@ -18,15 +20,17 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const submitting = useRef(false);
 
   async function handleLogin() {
-    if (loading) return;
+    if (submitting.current) return;
     if (!email.trim() || !password) {
       Alert.alert("Error", "Ingresa tu correo electrónico y contraseña");
       return;
     }
 
     try {
+      submitting.current = true;
       setLoading(true);
 
       await signIn({
@@ -44,12 +48,14 @@ export default function LoginScreen() {
             ),
       );
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.title}>Mi Health Center</Text>
 
       <Text style={styles.subtitle}>Iniciar sesión</Text>
@@ -62,6 +68,8 @@ export default function LoginScreen() {
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
         keyboardType="email-address"
       />
 
@@ -73,12 +81,17 @@ export default function LoginScreen() {
         value={password}
         onChangeText={setPassword}
         secureTextEntry
+        autoComplete="current-password"
+        returnKeyType="go"
+        onSubmitEditing={() => { void handleLogin(); }}
       />
 
       <TouchableOpacity
         style={styles.button}
         onPress={handleLogin}
         disabled={loading}
+        accessibilityRole="button"
+        accessibilityState={{ disabled: loading, busy: loading }}
       >
         <Text style={styles.buttonText}>
           {loading ? "Iniciando..." : "Iniciar sesión"}
@@ -92,13 +105,14 @@ export default function LoginScreen() {
       >
         <Text style={{ color: '#1765ae', fontSize: 16 }}>Crear cuenta</Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     padding: 24,
     backgroundColor: "#fff",
