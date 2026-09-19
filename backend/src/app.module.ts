@@ -10,6 +10,7 @@ import { PatientsModule } from './patients/patients.module';
 import { PaymentsModule } from './payments/payments.module';
 import { validateEnvironment } from './config/environment';
 import { HealthController } from './health/health.controller';
+import { HttpObservabilityModule } from './observability/http-observability.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -18,6 +19,7 @@ import { HealthController } from './health/health.controller';
       ignoreEnvFile: process.env.E2E_INTEGRATION_ISOLATED === '1',
     }),
     PrismaModule,
+    HttpObservabilityModule,
     AuthModule,
     RoomsModule,
     ReservationsModule,

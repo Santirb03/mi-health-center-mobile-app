@@ -23,7 +23,7 @@ Implementación mediante la función validate de ConfigModule: https://docs.nest
 ## Comprobaciones de salud
 
 - `GET /health`: 200 con `{"status":"ok"}` cuando el proceso HTTP responde. No consulta la base de datos.
-- `GET /health/ready`: ejecuta `SELECT 1`; devuelve 200 con `{"status":"ok","database":"up"}` o 503 con `{"status":"unavailable","database":"down"}` si falla o excede dos segundos.
+- `GET /health/ready`: ejecuta `SELECT 1`; devuelve 200 con `{"status":"ok","database":"up"}` o 503 si falla o excede dos segundos. El filtro global devuelve un mensaje genérico para errores 5xx; monitorea el código HTTP.
 
 Ambas rutas son públicas y no se almacenan en caché. No devuelven credenciales, versiones ni mensajes de error internos. El plazo limita la respuesta HTTP, no cancela la consulta; las solicitudes simultáneas comparten la consulta pendiente para no acumular trabajo. Una nueva consulta puede ejecutarse cuando termina la anterior.
 
