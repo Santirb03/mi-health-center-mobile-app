@@ -14,10 +14,12 @@ import { Action, styles } from "../../components/booking-ui";
 import { register } from "../../services/auth";
 import { getErrorMessage } from "../../services/errors";
 import {
-  registrationError,
+  registrationErrors,
   registrationPayload,
   type RegistrationForm,
 } from "../../services/registration";
+
+import { AuthInput } from "../../components/auth-input";
 
 export default function RegisterScreen() {
   const [form, setForm] = useState<RegistrationForm>({
@@ -27,25 +29,38 @@ export default function RegisterScreen() {
     password: "",
     confirmPassword: "",
   });
+  const [submitted, setSubmitted] = useState(false);
+  const [emailConflict, setEmailConflict] = useState<string | undefined>();
+  const fieldErrors = submitted ? registrationErrors(form) : {};
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
+  const scroll = useRef<ScrollView>(null);
+  const lastNameInput = useRef<TextInput>(null);
+  const emailInput = useRef<TextInput>(null);
+  const passwordInput = useRef<TextInput>(null);
+  const confirmInput = useRef<TextInput>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
     };
   }, []);
-  const change = (field: keyof RegistrationForm, value: string) =>
+  const change = (field: keyof RegistrationForm, value: string) => {
+    if (field === "email") setEmailConflict(undefined);
+    setError(null);
     setForm((previous) => ({ ...previous, [field]: value }));
+  };
 
   async function submit() {
     if (inFlight.current || created) return;
-    const validation = registrationError(form);
-    if (validation) {
-      setError(validation);
+    setSubmitted(true);
+    const validation = registrationErrors(form);
+    if (Object.keys(validation).length) {
+      setError(null);
+      scroll.current?.scrollTo({ y: 0, animated: true });
       return;
     }
     inFlight.current = true;
@@ -66,9 +81,11 @@ export default function RegisterScreen() {
         const status = axios.isAxiosError(failure)
           ? failure.response?.status
           : undefined;
+        if (status === 409)
+          setEmailConflict("Ese correo ya tiene una cuenta. Inicia sesión.");
         setError(
           status === 409
-            ? "Ese correo ya tiene una cuenta. Puedes volver e iniciar sesión."
+            ? null
             : status === 400
               ? "Revisa el correo, nombre y contraseña e intenta de nuevo."
               : status === 429
@@ -78,6 +95,7 @@ export default function RegisterScreen() {
                   )
                 : "No pudimos confirmar si se creó la cuenta. Intenta iniciar sesión antes de volver a registrarte.",
         );
+        scroll.current?.scrollTo({ y: 0, animated: true });
       }
     } finally {
       inFlight.current = false;
@@ -98,8 +116,10 @@ export default function RegisterScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
+          ref={scroll}
           keyboardShouldPersistTaps="handled"
-          contentContainerStyle={{ padding: 24, gap: 14 }}
+          keyboardDismissMode="on-drag"
+          contentContainerStyle={{ flexGrow: 1, padding: 24, gap: 14 }}
         >
           <Text style={styles.title}>
             {created ? "Cuenta creada" : "Crear cuenta"}
@@ -111,30 +131,50 @@ export default function RegisterScreen() {
               <Text style={styles.muted}>
                 Completa tus datos para registrarte en Mi Health Center.
               </Text>
+              {error && (
+                <Text
+                  accessibilityRole="alert"
+                  accessibilityLiveRegion="polite"
+                  style={{ color: "#b42318" }}
+                >
+                  {error}
+                </Text>
+              )}
               <Text>Nombre</Text>
-              <TextInput
+              <AuthInput
                 style={inputStyle}
                 accessibilityLabel="Nombre"
+                error={fieldErrors.firstName}
                 value={form.firstName}
                 onChangeText={(v) => change("firstName", v)}
                 editable={!busy}
                 autoCapitalize="words"
                 autoComplete="given-name"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => lastNameInput.current?.focus()}
               />
               <Text>Apellidos</Text>
-              <TextInput
+              <AuthInput
                 style={inputStyle}
                 accessibilityLabel="Apellidos"
+                ref={lastNameInput}
+                error={fieldErrors.lastName}
                 value={form.lastName}
                 onChangeText={(v) => change("lastName", v)}
                 editable={!busy}
                 autoCapitalize="words"
                 autoComplete="family-name"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => emailInput.current?.focus()}
               />
               <Text>Correo electrónico</Text>
-              <TextInput
+              <AuthInput
                 style={inputStyle}
                 accessibilityLabel="Correo electrónico"
+                ref={emailInput}
+                error={emailConflict ?? fieldErrors.email}
                 value={form.email}
                 onChangeText={(v) => change("email", v)}
                 editable={!busy}
@@ -142,32 +182,43 @@ export default function RegisterScreen() {
                 autoCorrect={false}
                 keyboardType="email-address"
                 autoComplete="email"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => passwordInput.current?.focus()}
               />
               <Text>Contraseña (mínimo 8 caracteres)</Text>
-              <TextInput
+              <AuthInput
                 style={inputStyle}
                 accessibilityLabel="Contraseña"
+                ref={passwordInput}
+                error={fieldErrors.password}
                 value={form.password}
                 onChangeText={(v) => change("password", v)}
                 editable={!busy}
-                secureTextEntry
+                password
                 autoCapitalize="none"
                 autoCorrect={false}
                 autoComplete="new-password"
+                returnKeyType="next"
+                submitBehavior="submit"
+                onSubmitEditing={() => confirmInput.current?.focus()}
               />
               <Text>Confirmar contraseña</Text>
-              <TextInput
+              <AuthInput
                 style={inputStyle}
                 accessibilityLabel="Confirmar contraseña"
+                ref={confirmInput}
+                error={fieldErrors.confirmPassword}
                 value={form.confirmPassword}
                 onChangeText={(v) => change("confirmPassword", v)}
                 editable={!busy}
-                secureTextEntry
+                password
                 autoCapitalize="none"
                 autoCorrect={false}
                 onSubmitEditing={() => void submit()}
+                returnKeyType="done"
+                submitBehavior="blurAndSubmit"
               />
-              {error && <Text accessibilityRole="alert">{error}</Text>}
               <Action
                 title={busy ? "Creando cuenta…" : "Crear cuenta"}
                 disabled={busy}

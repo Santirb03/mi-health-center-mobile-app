@@ -16,6 +16,7 @@ require.extensions[".ts"] = (module, filename) => {
 };
 const {
   registrationError,
+  registrationErrors,
   registrationPayload,
 } = require("../src/services/registration.ts");
 const form = {
@@ -25,6 +26,12 @@ const form = {
   password: " password ",
   confirmPassword: " password ",
 };
+test("registration maps independent errors to their fields and clears corrected values", () => {
+  const invalid = { ...form, firstName: '', email: 'bad', confirmPassword: 'different' };
+  assert.deepEqual(Object.keys(registrationErrors(invalid)), ['firstName', 'email', 'confirmPassword']);
+  assert.deepEqual(registrationErrors(form), {});
+  assert.deepEqual(Object.keys(registrationErrors({ ...invalid, firstName: 'Ana' })), ['email', 'confirmPassword']);
+});
 test("registration strips non-registration fields and preserves the exact password", () => {
   assert.equal(registrationError(form), null);
   assert.deepEqual(
