@@ -21,6 +21,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "migrate:status": "prisma migrate status",
     "test:deployment": "node test/run-payment-integration.cjs --deployment",
+    "test:backup": "node test/backup-restore.cjs",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "lint:check": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "typecheck": "tsc --noEmit --incremental false",

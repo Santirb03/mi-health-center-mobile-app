@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [payments, auth, e2e, deployment]
+        suite: [payments, auth, e2e, deployment, backup]
     defaults:
       run:
         working-directory: backend
@@ -71,6 +71,7 @@ jobs:
             auth) npm run test:auth:integration ;;
             e2e) npm run test:e2e ;;
             deployment) npm run build && npm run test:deployment ;;
+            backup) npm run test:backup ;;
           esac
 
   mobile:

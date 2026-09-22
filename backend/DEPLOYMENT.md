@@ -48,6 +48,6 @@ El runner crea PostgreSQL temporal, ejecuta migrate deploy dos veces, comprueba 
 
 ## Si falla una entrega
 
-No dirijas tráfico al nuevo proceso si readiness falla. Si falla una migración, detén la entrega y revisa su causa antes de volver a intentarlo. No borres ni alteres migraciones ya aplicadas. Volver al código anterior no revierte el esquema: solo hazlo si sigue siendo compatible. Los cambios destructivos requieren un plan explícito de recuperación; probar restauración y configurar backups queda pendiente al elegir proveedor.
+No dirijas tráfico al nuevo proceso si readiness falla. Si falla una migración, detén la entrega y revisa su causa antes de volver a intentarlo. No borres ni alteres migraciones ya aplicadas. Volver al código anterior no revierte el esquema: solo hazlo si sigue siendo compatible. Los cambios destructivos requieren un plan explícito de recuperación. El ensayo aislado de [respaldo y restauración](BACKUP_RESTORE.md) se ejecuta con `npm run test:backup`; configurar backups automáticos y validar recuperación con el proveedor sigue pendiente.
 
 Referencia: [Prisma migrate deploy v7](https://www.prisma.io/docs/cli/v7/migrate/deploy).
