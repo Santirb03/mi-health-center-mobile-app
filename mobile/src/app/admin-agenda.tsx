@@ -73,11 +73,13 @@ function Agenda() {
   }));
   const [dateInput, setDateInput] = useState(filters.date);
   const [dateError, setDateError] = useState<string | null>(null);
+  const filterKey = JSON.stringify([filters.date, filters.roomId, filters.status, filters.page]);
   const read = useCallback(
-    (signal: AbortSignal) => getAgenda(filters, signal),
-    [filters],
+    async (signal: AbortSignal) => ({ page: await getAgenda(filters, signal), filterKey }),
+    [filters, filterKey],
   );
   const agenda = useResource(read);
+  const page = agenda.data?.filterKey === filterKey ? agenda.data.page : null;
   const rooms = useResource(getAgendaRooms);
   const now = useNow();
   function changeDate(date: string) {
@@ -109,14 +111,14 @@ function Agenda() {
         <TextInput
           accessibilityLabel="Fecha de la agenda, AAAA-MM-DD"
           value={dateInput}
-          onChangeText={setDateInput}
+          onChangeText={(value) => { setDateInput(value); setDateError(null); }}
           placeholder="AAAA-MM-DD"
           autoCapitalize="none"
           maxLength={10}
           onSubmitEditing={applyDate}
           style={{
             borderWidth: 1,
-            borderColor: "#526477",
+            borderColor: dateError ? "#b42318" : "#526477",
             padding: 12,
             borderRadius: 8,
           }}
@@ -179,6 +181,14 @@ function Agenda() {
             />
           ))}
         </View>
+        <Action
+          title="Limpiar filtros"
+          onPress={() => {
+            setDateInput(filters.date);
+            setDateError(null);
+            setFilters({ date: filters.date, page: 1 });
+          }}
+        />
       </View>
       {filters.roomId &&
       rooms.data?.find((room) => room.id === filters.roomId) ? (
@@ -193,15 +203,20 @@ function Agenda() {
         </Text>
       )}
       <Action
-        title="Actualizar agenda"
+        title={agenda.loading ? "Cargando agenda…" : "Actualizar agenda"}
         disabled={agenda.loading}
         onPress={() => void agenda.reload()}
       />
       <LoadState {...agenda} />
-      {agenda.data?.items.length === 0 && (
-        <Text>No hay reservas para estos filtros en esta página.</Text>
+      {page?.items.length === 0 && (
+        <View style={styles.card}>
+          <Text>No hay reservas para estos filtros en esta página.</Text>
+          <Text style={styles.muted}>
+            Prueba otra fecha o limpia los filtros de consultorio y estado.
+          </Text>
+        </View>
       )}
-      {agenda.data?.items.map((item) => {
+      {page?.items.map((item) => {
         const expiredHold =
           item.status === "PENDING" &&
           (!item.expiresAt || Date.parse(item.expiresAt) <= now);
@@ -247,7 +262,7 @@ function Agenda() {
       />
       <Action
         title="Página siguiente"
-        disabled={agenda.loading || !agenda.data?.hasMore}
+        disabled={agenda.loading || !page?.hasMore}
         onPress={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}
       />
       <Action

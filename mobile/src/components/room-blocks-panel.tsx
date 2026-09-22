@@ -23,7 +23,10 @@ export function RoomBlocksPanel({
   date: string;
 }) {
   const read = useCallback(
-    (signal: AbortSignal) => getRoomBlocks(room.id, signal),
+    (signal: AbortSignal) => {
+      setRemoving(null);
+      return getRoomBlocks(room.id, signal);
+    },
     [room.id],
   );
   const blocks = useResource(read);
@@ -113,7 +116,7 @@ export function RoomBlocksPanel({
       <LoadState {...blocks} />
       {message && <Text accessibilityRole="alert">{message}</Text>}
       <Action
-        title="Actualizar bloqueos"
+        title={blocks.loading ? "Cargando bloqueos…" : "Actualizar bloqueos"}
         disabled={busy || blocks.loading}
         onPress={() => void blocks.reload()}
       />
@@ -137,7 +140,7 @@ export function RoomBlocksPanel({
                   disponibilidad de reservas.
                 </Text>
                 <Action
-                  title="Confirmar retiro"
+                  title={busy ? "Retirando bloqueo…" : "Confirmar retiro"}
                   disabled={busy}
                   onPress={() => void mutate("remove", block)}
                 />
@@ -189,7 +192,7 @@ export function RoomBlocksPanel({
             editable={!busy}
           />
           <Action
-            title={busy ? "Guardando…" : "Crear bloqueo"}
+            title={busy && !removing ? "Guardando…" : "Crear bloqueo"}
             disabled={busy || blocks.loading || !!blocks.error || !!removing}
             onPress={() => void mutate("create")}
           />

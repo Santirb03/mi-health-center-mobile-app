@@ -22,6 +22,17 @@ La agenda calcula `displayStatus=EXPIRED` para retenciones vencidas, sin escribi
 4. Consulta una combinación sin reservas: debe mostrar estado vacío. Introduce una fecha imposible (2031-02-29): debe mostrar validación sin cambiar la consulta.
 5. Si hay más de 50 reservas, usa Página siguiente/anterior. Actualizar vuelve a consultar la página actual.
 6. Interrumpe la red y actualiza: debe mostrar error y permitir reintentar. Vuelve a iniciar sesión como DOCTOR: debe conservar Mis reservas y no mostrar la agenda administrativa.
+7. Cambia rápidamente consultorio, estado y página: las tarjetas anteriores no
+   deben aparecer bajo los filtros nuevos. La navegación siguiente solo se habilita
+   con la respuesta de la consulta actual.
+8. Usa Limpiar filtros: conserva la fecha consultada, quita consultorio/estado y
+   vuelve a página 1. Una fecha inválida en edición no se aplica al limpiar.
+   Al editar una fecha con error, desaparece el mensaje anterior y al consultar
+   se valida nuevamente.
+9. Selecciona un consultorio y abre Retirar bloqueo. Actualiza los bloqueos:
+   la confirmación anterior debe cerrarse y exigir seleccionar nuevamente el
+   bloqueo. Al confirmar retiro, el botón indica Retirando bloqueo y queda
+   deshabilitado. Verifica que un doble toque no envíe dos operaciones.
 
 ## Validación automatizada
 
