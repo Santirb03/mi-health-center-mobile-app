@@ -11,6 +11,7 @@ import {
   formatTime,
   money,
   reservationLabel,
+  reservationGroups,
 } from "../../services/booking";
 
 export default function Reservations() {
@@ -28,35 +29,53 @@ export default function Reservations() {
         confirmada.
       </Text>
       <Action
-        title="Actualizar"
+        title={resource.loading ? "Actualizando reservas…" : "Actualizar"}
         disabled={resource.loading}
         onPress={() => void resource.reload()}
       />
       <LoadState {...resource} />
-      {resource.data?.length === 0 && <Text>Aún no tienes reservas.</Text>}
-      {resource.data
-        ?.slice()
-        .sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime))
-        .map((item) => (
-          <View key={item.id} style={styles.card}>
-            <Text style={styles.subtitle}>
-              {item.room?.name || "Consultorio"}
+      {resource.data?.length === 0 && (
+        <View style={styles.card}>
+          <Text style={styles.subtitle}>Aún no tienes reservas</Text>
+          <Text style={styles.muted}>
+            En Ver consultorios puedes elegir un consultorio y consultar sus horarios disponibles.
+          </Text>
+        </View>
+      )}
+      {reservationGroups(resource.data ?? [], now)
+        .filter((group) => group.items.length > 0)
+        .map((group) => (
+          <View key={group.title} style={{ gap: 12 }}>
+            <Text accessibilityRole="header" style={styles.subtitle}>
+              {group.title} ({group.items.length})
             </Text>
-            <Text>
-              {businessDate(new Date(item.startTime))} ·{" "}
-              {formatTime(item.startTime)}–{formatTime(item.endTime)}
-            </Text>
-            <Text>{reservationLabel(item, now)}</Text>
-            <Text>{money(item.totalPrice)} MXN</Text>
-            <Action
-              title={canPay(item, now) ? "Ver reserva y pagar" : "Ver reserva"}
-              onPress={() =>
-                router.push({
-                  pathname: "/reservations/[id]",
-                  params: { id: item.id },
-                })
-              }
-            />
+            {group.title === "Historial" && (
+              <Text style={styles.muted}>
+                Reservas pasadas, canceladas o con retención vencida.
+              </Text>
+            )}
+            {group.items.map((item) => (
+              <View key={item.id} style={styles.card}>
+                <Text style={styles.subtitle}>
+                  {item.room?.name || "Consultorio"}
+                </Text>
+                <Text>
+                  {businessDate(new Date(item.startTime))} ·{" "}
+                  {formatTime(item.startTime)}–{formatTime(item.endTime)}
+                </Text>
+                <Text>{reservationLabel(item, now)}</Text>
+                <Text>{money(item.totalPrice)} MXN</Text>
+                <Action
+                  title={canPay(item, now) ? "Ver reserva y pagar" : "Ver reserva"}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/reservations/[id]",
+                      params: { id: item.id },
+                    })
+                  }
+                />
+              </View>
+            ))}
           </View>
         ))}
       <Action

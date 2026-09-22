@@ -47,3 +47,9 @@ Use test accounts and a development database; creating a reservation writes data
 8. Open booking deep links while signed out; protected screens must remain gated.
 9. Test Android and iOS with large font sizes and a device timezone different
    from Mexico City. Native navigation and SecureStore need device verification.
+10. In My Reservations, active holds appear first (nearest expiry first), followed
+    by confirmed upcoming/in-progress reservations (nearest start first), then
+    history (most recent start first). At hold expiry or reservation end, the
+    item moves to history without changing its server status. Confirmed past
+    reservations must still say Confirmada, not Completada. Refresh and retry
+    must not show old groups while loading or after an error.

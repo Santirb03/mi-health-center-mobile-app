@@ -44,6 +44,17 @@ export default function ReservationDetail() {
             {reservationLabel(reservation, now)}
           </Text>
           <Text>Total: {money(reservation.totalPrice)} MXN</Text>
+          {reservation.status === "CONFIRMED" && (
+            <Text style={styles.muted}>
+              Tu horario está confirmado. No necesitas volver a pagar esta reserva.
+            </Text>
+          )}
+          {(reservation.status === "CANCELLED" || reservation.status === "EXPIRED") && (
+            <Text style={styles.muted}>
+              Esta reserva ya no está activa. Si realizaste un pago y tienes dudas,
+              consulta con administración usando la referencia de abajo.
+            </Text>
+          )}
           {reservation.status === "PENDING" && (
             <>
               <Text>
@@ -64,7 +75,7 @@ export default function ReservationDetail() {
       )}
       <ReservationPayment key={id} id={id} reservation={reservation} refresh={resource.reload} />
       <Action
-        title="Actualizar estado"
+        title={resource.loading ? "Consultando estado…" : "Actualizar estado"}
         disabled={resource.loading}
         onPress={() => void resource.reload()}
       />

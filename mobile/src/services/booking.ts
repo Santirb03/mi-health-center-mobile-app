@@ -92,3 +92,27 @@ export function matchingReservation(
           Date.parse(item.expiresAt) > now)),
   );
 }
+
+// Display groups only: moving a reservation to history never changes its status.
+export function reservationGroups(items: Reservation[], now = Date.now()) {
+  const pending: Reservation[] = [];
+  const confirmed: Reservation[] = [];
+  const history: Reservation[] = [];
+  for (const item of items) {
+    if (item.status === "PENDING" && item.expiresAt && Date.parse(item.expiresAt) > now) {
+      pending.push(item);
+    } else if (item.status === "CONFIRMED" && Date.parse(item.endTime) > now) {
+      confirmed.push(item);
+    } else {
+      history.push(item);
+    }
+  }
+  pending.sort((a, b) => Date.parse(a.expiresAt!) - Date.parse(b.expiresAt!));
+  confirmed.sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+  history.sort((a, b) => Date.parse(b.startTime) - Date.parse(a.startTime));
+  return [
+    { title: "Pendientes de pago", items: pending },
+    { title: "Confirmadas · próximas y en curso", items: confirmed },
+    { title: "Historial", items: history },
+  ];
+}

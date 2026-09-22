@@ -21,6 +21,7 @@ const {
   selectable,
   reservationLabel,
   matchingReservation,
+  reservationGroups,
 } = require("../src/services/booking.ts");
 const now = Date.parse("2031-01-10T14:00:00Z");
 const slots = [15, 16, 17].map((hour) => ({
@@ -40,6 +41,35 @@ const pending = {
   status: "PENDING",
   expiresAt: "2031-01-10T14:08:00Z",
 };
+
+test("reservation groups prioritize expiring holds and upcoming confirmed bookings without mutating input", () => {
+  const first = { ...pending, id: "first", expiresAt: "2031-01-10T14:01:00Z" };
+  const later = { ...pending, id: "later", status: "CONFIRMED", startTime: slots[2].startDateTime };
+  const ongoing = { ...pending, id: "ongoing", status: "CONFIRMED", startTime: "2031-01-10T13:00:00Z" };
+  const items = [later, pending, ongoing, first];
+  const before = structuredClone(items);
+  const groups = reservationGroups(items, now);
+  assert.deepEqual(groups.map((g) => g.items.map((r) => r.id)), [
+    ["first", "reservation"], ["ongoing", "later"], [],
+  ]);
+  assert.deepEqual(items, before);
+});
+
+test("reservation history handles exact expiry and end boundaries without completing server states", () => {
+  const items = [
+    { ...pending, expiresAt: new Date(now).toISOString() },
+    { ...pending, expiresAt: null },
+    { ...pending, status: "CONFIRMED", endTime: new Date(now).toISOString() },
+    ...["CANCELLED", "COMPLETED", "EXPIRED"].map((status) => ({ ...pending, status })),
+  ];
+  const groups = reservationGroups(items, now);
+  assert.equal(groups[0].items.length, 0);
+  assert.equal(groups[1].items.length, 0);
+  assert.equal(groups[2].items.length, items.length);
+  assert.equal(items[0].status, "PENDING");
+  assert.equal(items[2].status, "CONFIRMED");
+  assert.deepEqual(reservationGroups([], now).map((g) => g.items), [[], [], []]);
+});
 
 test("dates follow the coworking timezone across UTC midnight", () => {
   assert.equal(businessDate(new Date("2031-01-11T02:00:00Z")), "2031-01-10");

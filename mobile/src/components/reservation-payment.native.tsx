@@ -120,10 +120,17 @@ export function ReservationPayment({
     }
   }
 
+  const pending = reservation?.status === "PENDING";
+  const payable = !!reservation && canPay(reservation, now);
+  // Keep checkout state mounted while refreshing, but hide obsolete messages
+  // once the server has returned a final reservation status.
+  if (!busy && reservation && !pending) return null;
+  if (!busy && !message && !pending) return null;
+
   return (
     <View style={styles.card}>
       {message && <Text accessibilityRole="alert">{message}</Text>}
-      {reservation?.status === "PENDING" && (
+      {(busy || awaitingConfirmation || (pending && payable)) && (
         <>
           <Text style={styles.muted}>
             Modo de prueba · utiliza únicamente tarjetas de prueba de Stripe.
@@ -141,12 +148,20 @@ export function ReservationPayment({
                     paying: "Pago en curso…",
                     confirming: "Esperando confirmación…",
                   }[phase]
-                : "Pagar reserva"
+                : awaitingConfirmation
+                  ? "Pago enviado · actualiza el estado"
+                  : "Pagar reserva"
             }
-            disabled={!stripeTestConfigured || busy || awaitingConfirmation || !canPay(reservation, now)}
+            disabled={!stripeTestConfigured || busy || awaitingConfirmation || !payable}
             onPress={() => void pay()}
           />
         </>
+      )}
+      {pending && !payable && !busy && !awaitingConfirmation && (
+        <Text style={styles.muted}>
+          El plazo para pagar terminó. Actualiza el estado antes de intentar otra reserva.
+          Si ya pagaste, consulta con administración antes de volver a pagar.
+        </Text>
       )}
     </View>
   );
