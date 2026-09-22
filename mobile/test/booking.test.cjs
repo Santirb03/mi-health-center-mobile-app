@@ -18,6 +18,7 @@ const {
   businessDate,
   shiftDate,
   selectedRange,
+  selectBookingSlot,
   selectable,
   reservationLabel,
   matchingReservation,
@@ -41,6 +42,21 @@ const pending = {
   status: "PENDING",
   expiresAt: "2031-01-10T14:08:00Z",
 };
+
+test('selecting across an occupied hour rejects the change instead of silently moving the start', () => {
+  const blocked = slots.map((slot, index) => ({ ...slot, available: index !== 1 }));
+  assert.equal(selectBookingSlot(blocked, 0, 2, now), null);
+  assert.deepEqual(selectBookingSlot(blocked, -1, 2, now), { start: 2, end: 2 });
+  assert.deepEqual(selectBookingSlot(slots, 0, 2, now), { start: 0, end: 2 });
+  assert.deepEqual(selectBookingSlot(slots, 2, 0, now), { start: 0, end: 0 });
+});
+
+test('selection rejects unavailable, expired or missing slots at tap time', () => {
+  assert.equal(selectBookingSlot(slots, -1, 0, Date.parse(slots[0].startDateTime)), null);
+  assert.equal(selectBookingSlot(slots, 0, 2, Date.parse(slots[0].startDateTime)), null);
+  assert.equal(selectBookingSlot(slots, -1, 99, now), null);
+  assert.equal(selectBookingSlot([{ ...slots[0], blocked: true }], -1, 0, now), null);
+});
 
 const { createReservationPager } = require('../src/services/reservation-pager.ts');
 test('pagination preserves data on failure, retries the same cursor and deduplicates IDs', async () => {

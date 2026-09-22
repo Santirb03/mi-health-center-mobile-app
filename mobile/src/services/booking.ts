@@ -76,6 +76,14 @@ export function reservationLabel(
   }[reservation.status];
 }
 
+export function selectBookingSlot(slots: Slot[], start: number, index: number, now = Date.now()) {
+  if (!slots[index] || !selectable(slots[index], now)) return null;
+  if (start >= 0 && index > start) {
+    return selectedRange(slots, start, index, now).length ? { start, end: index } : null;
+  }
+  return { start: index, end: index };
+}
+
 export function matchingReservation(
   items: Reservation[],
   input: ReservationInput,

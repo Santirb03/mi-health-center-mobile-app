@@ -16,6 +16,7 @@ import {
   money,
   selectable,
   selectedRange,
+  selectBookingSlot,
   shiftDate,
 } from "../../services/booking";
 import { session } from "../../services/api";
@@ -70,15 +71,27 @@ export default function RoomDetail() {
   );
 
   function select(index: number) {
+    if (!ready || sending.current || submitting || uncertain) return;
     const slots = resource.data?.availability.slots ?? [];
-    const extended = selectedRange(slots, start, index, Date.now());
-    if (start >= 0 && index > start && extended.length) setEnd(index);
-    else {
-      setStart(index);
-      setEnd(index);
+    const next = selectBookingSlot(slots, start, index, Date.now());
+    if (!next) {
+      setReview(false);
+      setMessage("El intervalo debe tener horas consecutivas disponibles. Borra la selección para elegir otro horario.");
+      return;
     }
+    setStart(next.start);
+    setEnd(next.end);
     setReview(false);
     setMessage(null);
+  }
+
+  function changeDate(next: string) {
+    if (sending.current || uncertain) return;
+    setStart(-1);
+    setEnd(-1);
+    setReview(false);
+    setMessage(null);
+    setDate(next);
   }
 
   async function submit() {
@@ -147,6 +160,25 @@ export default function RoomDetail() {
 
   return (
     <Page>
+      <Text style={styles.subtitle}>Fecha: {date}</Text>
+      <Text style={styles.muted}>Horarios de Ciudad de México · 08:00 a 21:00</Text>
+      <View style={styles.row}>
+        <Action
+          title="Día anterior"
+          disabled={date <= businessDate(new Date(now)) || submitting || uncertain}
+          onPress={() => changeDate(shiftDate(date, -1))}
+        />
+        <Action
+          title="Día siguiente"
+          disabled={submitting || uncertain}
+          onPress={() => changeDate(shiftDate(date, 1))}
+        />
+      </View>
+      <Action
+        title={resource.loading ? "Cargando horarios…" : "Actualizar horarios"}
+        disabled={submitting || uncertain || resource.loading}
+        onPress={() => void resource.reload()}
+      />
       <LoadState {...resource} />
       {message && <Text accessibilityRole="alert">{message}</Text>}
       {uncertain && (
@@ -155,7 +187,7 @@ export default function RoomDetail() {
           onPress={() => router.replace("/reservations")}
         />
       )}
-      {resource.data && (
+      {ready && resource.data && (
         <>
           <Text style={styles.title}>{resource.data.room.name}</Text>
           <Text style={styles.muted}>
@@ -165,29 +197,6 @@ export default function RoomDetail() {
           <Text style={styles.subtitle}>
             {money(resource.data.room.pricePerHour)} MXN / hora
           </Text>
-          <Text style={styles.muted}>
-            Horarios de Ciudad de México · 08:00 a 21:00
-          </Text>
-          <View style={styles.row}>
-            <Action
-              title="Día anterior"
-              disabled={
-                date <= businessDate(new Date(now)) || submitting || uncertain
-              }
-              onPress={() => setDate(shiftDate(date, -1))}
-            />
-            <Action
-              title="Día siguiente"
-              disabled={submitting || uncertain}
-              onPress={() => setDate(shiftDate(date, 1))}
-            />
-          </View>
-          <Text style={styles.subtitle}>Fecha: {date}</Text>
-          <Action
-            title="Actualizar horarios"
-            disabled={submitting || uncertain || resource.loading}
-            onPress={() => void resource.reload()}
-          />
           <Text style={styles.muted}>
             Selecciona la primera hora y después la última para reservar varias
             horas consecutivas.
@@ -237,6 +246,18 @@ export default function RoomDetail() {
           {!resource.data.availability.slots.some((slot) =>
             selectable(slot, now),
           ) && <Text>No hay horarios disponibles para esta fecha.</Text>}
+          {start >= 0 && !range.length && (
+            <Text accessibilityRole="alert">
+              El horario seleccionado ya no está disponible. Borra la selección y elige otro.
+            </Text>
+          )}
+          {start >= 0 && (
+            <Action
+              title="Borrar selección"
+              disabled={submitting || uncertain}
+              onPress={() => { setStart(-1); setEnd(-1); setReview(false); setMessage(null); }}
+            />
+          )}
           {!!range.length && (
             <View style={styles.card}>
               <Text style={styles.subtitle}>
