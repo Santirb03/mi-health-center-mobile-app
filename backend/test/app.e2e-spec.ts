@@ -299,6 +299,46 @@ describe('Backend E2E', () => {
       response.body.accessToken;
   });
 
+  it('paginates tied dates without duplicates and scopes every cursor to the authenticated doctor', async () => {
+    const owner = await prisma.user.findUniqueOrThrow({ where: { email }, include: { doctorProfile: true } });
+    const doctorId = owner.doctorProfile!.id;
+    const fixtureIds: string[] = [];
+    try {
+      const date = new Date('2035-01-01T15:00:00Z');
+      for (let index = 0; index < 45; index++) {
+        const row = await prisma.reservation.create({ data: {
+          doctorId, roomId, startTime: date, endTime: new Date('2035-01-01T16:00:00Z'),
+          totalPrice: 500, status: 'CANCELLED',
+        } });
+        fixtureIds.push(row.id);
+      }
+      const page = (cursor?: string, bearer = accessToken) => request(app.getHttpServer())
+        .get('/reservations/page').query({ group: 'history', ...(cursor ? { cursor } : {}) })
+        .auth(bearer, { type: 'bearer' }).expect(200);
+      const first = (await page()).body;
+      expect(first.items).toHaveLength(20);
+      expect(first.nextCursor).toEqual(expect.any(String));
+      const other = (await page(first.nextCursor, secondDoctorAccessToken)).body;
+      expect(other).toEqual({ items: [], nextCursor: null });
+      // A newer insertion must not shift the next page as offset pagination would.
+      const newer = await prisma.reservation.create({ data: {
+        doctorId, roomId, startTime: new Date('2036-01-01T15:00:00Z'),
+        endTime: new Date('2036-01-01T16:00:00Z'), totalPrice: 500, status: 'CANCELLED',
+      } });
+      fixtureIds.push(newer.id);
+      const second = (await page(first.nextCursor)).body;
+      const third = (await page(second.nextCursor)).body;
+      expect(second.items).toHaveLength(20);
+      expect(third.items).toHaveLength(5);
+      expect(third.nextCursor).toBeNull();
+      const ids = [...first.items, ...second.items, ...third.items].map((row: { id: string }) => row.id);
+      expect(new Set(ids).size).toBe(45);
+      expect(ids).toEqual(fixtureIds.slice(0, 45).sort().reverse());
+    } finally {
+      await prisma.reservation.deleteMany({ where: { id: { in: fixtureIds } } });
+    }
+  });
+
   it('should not allow a doctor to view another doctor reservation', async () => {
     await request(app.getHttpServer())
       .get(`/reservations/${reservationId}`)

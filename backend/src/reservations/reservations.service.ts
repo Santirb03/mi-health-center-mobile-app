@@ -7,6 +7,9 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateReservationDto } from './dto/create-reservation.dto';
+import { ReservationPageDto } from './dto/reservation-page.dto';
+import { Prisma } from '@prisma/client';
+import { isUUID } from 'class-validator';
 
 const OPENING_HOUR = 8;
 const CLOSING_HOUR = 21;
@@ -330,6 +333,58 @@ export class ReservationsService {
                 startTime: 'asc',
             },
         });
+    }
+
+    async page(userId: string, query: ReservationPageDto) {
+        const doctor = await this.prisma.doctorProfile.findUnique({ where: { userId } });
+        if (!doctor) throw new NotFoundException('Doctor profile not found');
+        const now = new Date();
+        const field = query.group === 'pending' ? 'expiresAt' : 'startTime';
+        const descending = query.group === 'history';
+        const pending: Prisma.ReservationWhereInput = {
+            status: 'PENDING', expiresAt: { gt: now },
+        };
+        const confirmed: Prisma.ReservationWhereInput = {
+            status: 'CONFIRMED', endTime: { gt: now },
+        };
+        const history: Prisma.ReservationWhereInput = { OR: [
+            { status: { in: ['CANCELLED', 'COMPLETED', 'EXPIRED'] } },
+            { status: 'CONFIRMED', endTime: { lte: now } },
+            { status: 'PENDING', OR: [{ expiresAt: null }, { expiresAt: { lte: now } }] },
+        ] };
+        const conditions: Prisma.ReservationWhereInput[] = [
+            { doctorId: doctor.id },
+            query.group === 'pending' ? pending : query.group === 'confirmed' ? confirmed : history,
+        ];
+        if (query.cursor) {
+            try {
+                const cursor = JSON.parse(Buffer.from(query.cursor, 'base64url').toString('utf8'));
+                if (cursor.group !== query.group || typeof cursor.id !== 'string' || !isUUID(cursor.id)
+                    || typeof cursor.time !== 'string' || new Date(cursor.time).toISOString() !== cursor.time) {
+                    throw new Error('Invalid cursor');
+                }
+                const operator = descending ? 'lt' : 'gt';
+                conditions.push({ OR: [
+                    { [field]: { [operator]: new Date(cursor.time) } },
+                    { [field]: new Date(cursor.time), id: { [operator]: cursor.id } },
+                ] });
+            } catch {
+                throw new BadRequestException('Invalid reservation cursor');
+            }
+        }
+        const direction = descending ? 'desc' : 'asc';
+        const rows = await this.prisma.reservation.findMany({
+            where: { AND: conditions },
+            include: { room: true },
+            orderBy: [{ [field]: direction }, { id: direction }],
+            take: 21,
+        });
+        const items = rows.slice(0, 20);
+        const last = items.at(-1);
+        const nextCursor = rows.length > 20 && last
+            ? Buffer.from(JSON.stringify({ group: query.group, id: last.id, time: last[field]!.toISOString() })).toString('base64url')
+            : null;
+        return { items, nextCursor };
     }
 
     async findOne(
