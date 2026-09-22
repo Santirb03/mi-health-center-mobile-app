@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type { Room } from "./rooms";
+import type { ReservationPage, ReservationSection } from './reservation-pager';
 
 export interface Reservation {
   id: string;
@@ -20,6 +21,12 @@ export interface ReservationInput {
 
 export async function getReservations(signal?: AbortSignal) {
   return (await api.get<Reservation[]>("/reservations", { signal })).data;
+}
+
+export async function getReservationPage(group: ReservationSection, cursor: string | null, signal: AbortSignal) {
+  return (await api.get<ReservationPage>('/reservations/page', {
+    params: { group, ...(cursor ? { cursor } : {}) }, signal,
+  })).data;
 }
 
 export async function getReservation(id: string, signal?: AbortSignal) {

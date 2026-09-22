@@ -1,10 +1,9 @@
-import { useCallback } from "react";
-import { Text, View } from "react-native";
+import { ActivityIndicator, Text, View } from "react-native";
 import { router } from "expo-router";
-import { Action, LoadState, Page, styles } from "../../components/booking-ui";
-import { useResource } from "../../hooks/use-resource";
+import { Action, Page, styles } from "../../components/booking-ui";
+import { useReservationPages } from "../../hooks/use-reservation-pages";
 import { useNow } from "../../hooks/use-now";
-import { getReservations } from "../../services/reservations";
+import { reservationSections } from "../../services/reservation-pager";
 import { canPay } from "../../services/checkout";
 import {
   businessDate,
@@ -15,12 +14,11 @@ import {
 } from "../../services/booking";
 
 export default function Reservations() {
-  const read = useCallback(
-    (signal: AbortSignal) => getReservations(signal),
-    [],
-  );
-  const resource = useResource(read);
+  const resource = useReservationPages();
   const now = useNow();
+  const pages = reservationSections.map((key) => resource.pages[key]);
+  const loading = pages.some((page) => page.loading);
+  const items = [...new Map(pages.flatMap((page) => page.items).map((item) => [item.id, item])).values()];
   return (
     <Page>
       <Text style={styles.title}>Mis reservas</Text>
@@ -29,12 +27,11 @@ export default function Reservations() {
         confirmada.
       </Text>
       <Action
-        title={resource.loading ? "Actualizando reservas…" : "Actualizar"}
-        disabled={resource.loading}
+        title={loading ? "Cargando reservas…" : "Actualizar"}
+        disabled={loading}
         onPress={() => void resource.reload()}
       />
-      <LoadState {...resource} />
-      {resource.data?.length === 0 && (
+      {!loading && pages.every((page) => !page.error) && items.length === 0 && (
         <View style={styles.card}>
           <Text style={styles.subtitle}>Aún no tienes reservas</Text>
           <Text style={styles.muted}>
@@ -42,12 +39,13 @@ export default function Reservations() {
           </Text>
         </View>
       )}
-      {reservationGroups(resource.data ?? [], now)
-        .filter((group) => group.items.length > 0)
+      {reservationGroups(items, now)
+        .map((group, index) => ({ ...group, key: reservationSections[index], page: pages[index] }))
+        .filter((group) => group.items.length > 0 || group.page.loading || group.page.error || group.page.nextCursor)
         .map((group) => (
           <View key={group.title} style={{ gap: 12 }}>
             <Text accessibilityRole="header" style={styles.subtitle}>
-              {group.title} ({group.items.length})
+              {group.title} ({group.items.length} cargadas)
             </Text>
             {group.title === "Historial" && (
               <Text style={styles.muted}>
@@ -76,6 +74,15 @@ export default function Reservations() {
                 />
               </View>
             ))}
+            {group.page.loading && <ActivityIndicator accessibilityLabel="Cargando reservas" />}
+            {group.page.error && <Text accessibilityRole="alert">{group.page.error}</Text>}
+            {(group.page.nextCursor || group.page.error) && (
+              <Action
+                title={group.page.loading ? "Cargando…" : group.page.error ? "Reintentar" : "Cargar más"}
+                disabled={group.page.loading}
+                onPress={() => void resource.more(group.key)}
+              />
+            )}
           </View>
         ))}
       <Action

@@ -53,3 +53,34 @@ Use test accounts and a development database; creating a reservation writes data
     item moves to history without changing its server status. Confirmed past
     reservations must still say Confirmada, not Completada. Refresh and retry
     must not show old groups while loading or after an error.
+
+## Paginated reservations
+
+My Reservations requests `GET /reservations/page?group=pending|confirmed|history`.
+Each section loads at most 20 rows and receives an opaque `nextCursor` (null at
+the end). Load more submits that cursor for the same section. Ordering uses
+expiry/start time plus ID as a tie-breaker, rather than offset pagination.
+Counts on screen describe loaded records, not database totals.
+
+- Pending holds and confirmed upcoming/in-progress reservations load separately
+  from history, so old records cannot hide active bookings.
+- A failed next page preserves loaded cards and retries the same cursor.
+- Duplicate taps are ignored. Refresh/focus/foreground resets all pages and
+  cancels old requests; responses arriving after cancellation are discarded.
+- These are live queries, not a frozen snapshot. New records before the cursor
+  and records changing sections are reconciled by refreshing. Local clock-based
+  grouping remains advisory and never changes stored reservation statuses.
+- The existing `GET /reservations` array response remains compatible for older
+  clients and ambiguous-create recovery. It is still unbounded; this change
+  bounds the normal list screen, not every legacy API consumer.
+
+Manual: use a test doctor with over 20 records in a section, tap Load more twice,
+verify no duplicate cards, disconnect before another page and retry after
+reconnecting. Refresh returns to the first page of each section. With fewer
+than 21 records per section, no Load more button is expected. No real payments
+are needed. Restart the backend if it is not running in watch mode.
+
+Automated: mobile pager tests cover retry, deduplication, concurrent taps and
+late responses. Backend HTTP tests cover query validation/authentication, and
+the disposable PostgreSQL E2E checks tied timestamps, insertion between pages,
+end-of-list and ownership even with a cursor copied from another account.

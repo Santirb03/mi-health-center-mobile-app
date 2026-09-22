@@ -42,6 +42,51 @@ const pending = {
   expiresAt: "2031-01-10T14:08:00Z",
 };
 
+const { createReservationPager } = require('../src/services/reservation-pager.ts');
+test('pagination preserves data on failure, retries the same cursor and deduplicates IDs', async () => {
+  const cursors = [];
+  let fail = true;
+  const pager = createReservationPager(async (group, cursor) => {
+    if (group !== 'history') return { items: [], nextCursor: null };
+    cursors.push(cursor);
+    if (!cursor) return { items: [pending], nextCursor: 'next' };
+    if (fail) { fail = false; throw new Error('offline'); }
+    return { items: [pending, { ...pending, id: 'second' }], nextCursor: null };
+  });
+  await pager.reload();
+  await pager.more('history');
+  assert.equal(pager.getSnapshot().history.items.length, 1);
+  assert.ok(pager.getSnapshot().history.error);
+  await pager.more('history');
+  await pager.more('history');
+  assert.deepEqual(cursors, [null, 'next', 'next']);
+  assert.equal(pager.getSnapshot().history.items.length, 2);
+});
+
+test('pagination ignores late results after refresh or leaving the screen and blocks duplicate taps', async () => {
+  let finish;
+  let calls = 0;
+  const pager = createReservationPager(async (group, cursor) => {
+    if (group !== 'history') return { items: [], nextCursor: null };
+    calls++;
+    if (cursor) return new Promise((resolve) => { finish = resolve; });
+    return { items: [pending], nextCursor: 'next' };
+  });
+  await pager.reload();
+  const stale = pager.more('history');
+  await pager.more('history');
+  assert.equal(calls, 2);
+  await pager.reload();
+  finish({ items: [{ ...pending, id: 'stale' }], nextCursor: null });
+  await stale;
+  assert.deepEqual(pager.getSnapshot().history.items.map((r) => r.id), [pending.id]);
+  const disposed = pager.more('history');
+  pager.dispose();
+  finish({ items: [{ ...pending, id: 'disposed' }], nextCursor: null });
+  await disposed;
+  assert.deepEqual(pager.getSnapshot().history.items.map((r) => r.id), [pending.id]);
+});
+
 test("reservation groups prioritize expiring holds and upcoming confirmed bookings without mutating input", () => {
   const first = { ...pending, id: "first", expiresAt: "2031-01-10T14:01:00Z" };
   const later = { ...pending, id: "later", status: "CONFIRMED", startTime: slots[2].startDateTime };
