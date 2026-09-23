@@ -13,7 +13,11 @@ import { router, useFocusEffect } from "expo-router";
 import { api } from "../services/api";
 import { useSession } from "../providers/session-provider";
 import { getErrorMessage } from "../services/errors";
-import { ReservationNavigation } from '../components/reservation-navigation';
+import { ReservationNavigation } from "../components/reservation-navigation";
+import { AdminHome } from "../components/admin-home";
+import { LoadState, Page } from "../components/booking-ui";
+import { getCurrentUser } from "../services/admin-agenda";
+import { useResource } from "../hooks/use-resource";
 
 interface Room {
   id: string;
@@ -24,6 +28,18 @@ interface Room {
 }
 
 export default function HomeScreen() {
+  const user = useResource(getCurrentUser);
+  if (user.data?.role === "ADMIN") return <AdminHome />;
+  if (user.data?.role === "DOCTOR") return <DoctorHome />;
+  return (
+    <Page>
+      <Text style={styles.title}>Mi Health Center</Text>
+      <LoadState {...user} />
+    </Page>
+  );
+}
+
+function DoctorHome() {
   const { signOut } = useSession();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
@@ -84,10 +100,12 @@ export default function HomeScreen() {
     }
   }, []);
 
-  useFocusEffect(useCallback(() => {
-    void loadRooms();
-    return () => request.current?.abort();
-  }, [loadRooms]));
+  useFocusEffect(
+    useCallback(() => {
+      void loadRooms();
+      return () => request.current?.abort();
+    }, [loadRooms]),
+  );
 
   if (loading) {
     return (

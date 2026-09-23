@@ -14,8 +14,18 @@ require.extensions[".ts"] = (module, filename) => {
     filename,
   );
 };
-const { blockInput, blocksOnDate } = require("../src/services/block-form.ts");
+const { blockErrors, blockInput, blocksOnDate } = require("../src/services/block-form.ts");
 const now = Date.parse("2031-01-10T13:00:00Z");
+
+test('block errors target invalid start/end fields and revalidate their relationship', () => {
+  assert.deepEqual(Object.keys(blockErrors('2031-01-10', '07', '22', '', now)), ['start', 'end']);
+  assert.deepEqual(Object.keys(blockErrors('2031-01-10', '12', '11', '', now)), ['end']);
+  assert.deepEqual(blockErrors('2031-01-10', '12', '13', '', now), {});
+  assert.deepEqual(Object.keys(blockErrors('2031-01-10', '08', '09', '', now + 3600000)), ['start']);
+  assert.deepEqual(Object.keys(blockErrors('2031-02-29', '08', '09', '', now)), ['date']);
+  assert.deepEqual(Object.keys(blockErrors('2031-01-10', '08', '09', 'x'.repeat(501), now)), ['reason']);
+  assert.throws(() => blockInput('2031-01-10', '08', '09', 'x'.repeat(501), now));
+});
 test("block hours use coworking time regardless of device timezone", () => {
   assert.deepEqual(blockInput("2031-01-10", "8", "21", " Maintenance ", now), {
     startTime: "2031-01-10T14:00:00.000Z",

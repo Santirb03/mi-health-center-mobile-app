@@ -1,16 +1,11 @@
 import { useCallback, useState } from "react";
 import { router } from "expo-router";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { Action, LoadState, Page, styles } from "../components/booking-ui";
 import { useResource } from "../hooks/use-resource";
 import { useNow } from "../hooks/use-now";
-import { RoomBlocksPanel } from "../components/room-blocks-panel";
-import {
-  businessDate,
-  formatTime,
-  money,
-  shiftDate,
-} from "../services/booking";
+import { AdminNav, Choice, DateNavigator } from "../components/admin-ui";
+import { businessDate, formatTime, money } from "../services/booking";
 import {
   agendaStatusLabels,
   getAgenda,
@@ -39,182 +34,155 @@ export default function AdminAgenda() {
   );
 }
 
-function Choice({
-  title,
-  selected,
-  onPress,
-}: {
-  title: string;
-  selected: boolean;
-  onPress(): void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      onPress={onPress}
-      style={{
-        borderWidth: 1,
-        borderColor: "#1765ae",
-        padding: 10,
-        borderRadius: 8,
-        backgroundColor: selected ? "#1765ae" : "#fff",
-      }}
-    >
-      <Text style={{ color: selected ? "#fff" : "#1765ae" }}>{title}</Text>
-    </Pressable>
-  );
-}
-
 function Agenda() {
   const [filters, setFilters] = useState<AgendaFilters>(() => ({
     date: businessDate(),
     page: 1,
   }));
-  const [dateInput, setDateInput] = useState(filters.date);
-  const [dateError, setDateError] = useState<string | null>(null);
-  const filterKey = JSON.stringify([filters.date, filters.roomId, filters.status, filters.page]);
+  const [showFilters, setShowFilters] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const filterKey = JSON.stringify([
+    filters.date,
+    filters.roomId,
+    filters.status,
+    filters.page,
+  ]);
   const read = useCallback(
-    async (signal: AbortSignal) => ({ page: await getAgenda(filters, signal), filterKey }),
+    async (signal: AbortSignal) => ({
+      page: await getAgenda(filters, signal),
+      filterKey,
+    }),
     [filters, filterKey],
   );
   const agenda = useResource(read);
   const page = agenda.data?.filterKey === filterKey ? agenda.data.page : null;
   const rooms = useResource(getAgendaRooms);
   const now = useNow();
-  function changeDate(date: string) {
-    setDateInput(date);
-    setDateError(null);
-    setFilters((previous) => ({ ...previous, date, page: 1 }));
-  }
-  function applyDate() {
-    const date = dateInput.trim();
-    const parsed = new Date(`${date}T00:00:00Z`);
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-      !Number.isFinite(parsed.getTime()) ||
-      parsed.toISOString().slice(0, 10) !== date
-    ) {
-      setDateError("Escribe una fecha válida: AAAA-MM-DD.");
-      return;
-    }
-    changeDate(date);
+  const selectedRoom = rooms.data?.find((room) => room.id === filters.roomId);
+  const activeFilters = Number(!!filters.roomId) + Number(!!filters.status);
+  function clearFilters() {
+    setFilters({ date: filters.date, page: 1 });
   }
   return (
     <Page>
-      <Text style={styles.title}>Agenda del administrador</Text>
-      <Text style={styles.muted}>
-        Horarios de Ciudad de México · {filters.date}
-      </Text>
+      <AdminNav current="/admin-agenda" />
+      <View style={{ gap: 6 }}>
+        <Text style={styles.title}>Agenda</Text>
+        <Text style={styles.muted}>Reservas y pagos, organizados por día.</Text>
+      </View>
       <View style={styles.card}>
-        <Text style={styles.subtitle}>Fecha</Text>
-        <TextInput
-          accessibilityLabel="Fecha de la agenda, AAAA-MM-DD"
-          value={dateInput}
-          onChangeText={(value) => { setDateInput(value); setDateError(null); }}
-          placeholder="AAAA-MM-DD"
-          autoCapitalize="none"
-          maxLength={10}
-          onSubmitEditing={applyDate}
-          style={{
-            borderWidth: 1,
-            borderColor: dateError ? "#b42318" : "#526477",
-            padding: 12,
-            borderRadius: 8,
-          }}
+        <DateNavigator
+          date={filters.date}
+          onChange={(date) => setFilters((f) => ({ ...f, date, page: 1 }))}
         />
-        {dateError && <Text accessibilityRole="alert">{dateError}</Text>}
-        <Action title="Consultar fecha" onPress={applyDate} />
-        <View style={styles.row}>
-          <Choice
-            title="Día anterior"
-            selected={false}
-            onPress={() => changeDate(shiftDate(filters.date, -1))}
-          />
-          <Choice
-            title="Hoy"
-            selected={filters.date === businessDate()}
-            onPress={() => changeDate(businessDate())}
-          />
-          <Choice
-            title="Día siguiente"
-            selected={false}
-            onPress={() => changeDate(shiftDate(filters.date, 1))}
-          />
-        </View>
-        <Text style={styles.subtitle}>Consultorio</Text>
-        <LoadState {...rooms} />
-        <View style={styles.row}>
-          <Choice
-            title="Todos"
-            selected={!filters.roomId}
-            onPress={() =>
-              setFilters((f) => ({ ...f, roomId: undefined, page: 1 }))
+        <Text style={[styles.muted, { textAlign: "center" }]}>
+          Horarios de Ciudad de México
+        </Text>
+      </View>
+      <View style={styles.row}>
+        <View style={{ flex: 1 }}>
+          <Action
+            title={
+              showFilters
+                ? "Cerrar filtros"
+                : `Filtros${activeFilters ? ` · ${activeFilters}` : ""}`
             }
+            variant="secondary"
+            onPress={() => setShowFilters((value) => !value)}
           />
-          {rooms.data?.map((room) => (
-            <Choice
-              key={room.id}
-              title={`${room.name}${room.active ? "" : " (inactivo)"}`}
-              selected={filters.roomId === room.id}
-              onPress={() =>
-                setFilters((f) => ({ ...f, roomId: room.id, page: 1 }))
-              }
-            />
-          ))}
-        </View>
-        <Text style={styles.subtitle}>Estado de la reserva</Text>
-        <View style={styles.row}>
-          <Choice
-            title="Todos"
-            selected={!filters.status}
-            onPress={() =>
-              setFilters((f) => ({ ...f, status: undefined, page: 1 }))
-            }
-          />
-          {(Object.keys(agendaStatusLabels) as AgendaStatus[]).map((status) => (
-            <Choice
-              key={status}
-              title={agendaStatusLabels[status]}
-              selected={filters.status === status}
-              onPress={() => setFilters((f) => ({ ...f, status, page: 1 }))}
-            />
-          ))}
         </View>
         <Action
-          title="Limpiar filtros"
-          onPress={() => {
-            setDateInput(filters.date);
-            setDateError(null);
-            setFilters({ date: filters.date, page: 1 });
-          }}
+          title={agenda.loading ? "Actualizando…" : "Actualizar"}
+          variant="quiet"
+          disabled={agenda.loading}
+          onPress={() => void agenda.reload()}
         />
       </View>
-      {filters.roomId &&
-      rooms.data?.find((room) => room.id === filters.roomId) ? (
-        <RoomBlocksPanel
-          key={`${filters.roomId}:${filters.date}`}
-          room={rooms.data.find((room) => room.id === filters.roomId)!}
-          date={filters.date}
-        />
-      ) : (
+      {activeFilters > 0 && (
         <Text style={styles.muted}>
-          Selecciona un consultorio para consultar o gestionar sus bloqueos.
+          {selectedRoom?.name ??
+            (filters.roomId
+              ? "Consultorio seleccionado"
+              : "Todos los consultorios")}{" "}
+          ·{" "}
+          {filters.status
+            ? agendaStatusLabels[filters.status]
+            : "Todos los estados"}
         </Text>
       )}
-      <Action
-        title={agenda.loading ? "Cargando agenda…" : "Actualizar agenda"}
-        disabled={agenda.loading}
-        onPress={() => void agenda.reload()}
-      />
+      {showFilters && (
+        <View style={styles.card}>
+          <Text style={styles.subtitle}>Consultorio</Text>
+          <LoadState {...rooms} />
+          <View style={styles.row}>
+            <Choice
+              title="Todos"
+              selected={!filters.roomId}
+              onPress={() =>
+                setFilters((f) => ({ ...f, roomId: undefined, page: 1 }))
+              }
+            />
+            {rooms.data?.map((room) => (
+              <Choice
+                key={room.id}
+                title={`${room.name}${room.active ? "" : " (inactivo)"}`}
+                selected={filters.roomId === room.id}
+                onPress={() =>
+                  setFilters((f) => ({ ...f, roomId: room.id, page: 1 }))
+                }
+              />
+            ))}
+          </View>
+          <Text style={styles.subtitle}>Estado de la reserva</Text>
+          <View style={styles.row}>
+            <Choice
+              title="Todos"
+              selected={!filters.status}
+              onPress={() =>
+                setFilters((f) => ({ ...f, status: undefined, page: 1 }))
+              }
+            />
+            {(Object.keys(agendaStatusLabels) as AgendaStatus[]).map(
+              (status) => (
+                <Choice
+                  key={status}
+                  title={agendaStatusLabels[status]}
+                  selected={filters.status === status}
+                  onPress={() => setFilters((f) => ({ ...f, status, page: 1 }))}
+                />
+              ),
+            )}
+          </View>
+          {activeFilters > 0 && (
+            <Action
+              title="Limpiar filtros"
+              variant="quiet"
+              onPress={clearFilters}
+            />
+          )}
+        </View>
+      )}
       <LoadState {...agenda} />
       {page?.items.length === 0 && (
         <View style={styles.card}>
-          <Text>No hay reservas para estos filtros en esta página.</Text>
+          <Text>No hay reservas para esta consulta.</Text>
           <Text style={styles.muted}>
-            Prueba otra fecha o limpia los filtros de consultorio y estado.
+            Puedes elegir otro día o revisar los filtros.
           </Text>
+          {activeFilters > 0 && (
+            <Action
+              title="Ver todos los consultorios y estados"
+              variant="secondary"
+              onPress={clearFilters}
+            />
+          )}
         </View>
+      )}
+      {page && page.items.length > 0 && (
+        <Text style={styles.muted}>
+          {page.items.length} {page.items.length === 1 ? "reserva" : "reservas"}{" "}
+          en esta página
+        </Text>
       )}
       {page?.items.map((item) => {
         const expiredHold =
@@ -223,17 +191,41 @@ function Agenda() {
         const status = expiredHold ? "EXPIRED" : item.displayStatus;
         return (
           <View key={item.id} style={styles.card}>
-            <Text style={styles.subtitle}>
-              {formatTime(item.startTime)}–{formatTime(item.endTime)} ·{" "}
-              {item.room.name}
-            </Text>
+            <View style={[styles.row, { justifyContent: "space-between" }]}>
+              <Text style={styles.subtitle}>
+                {formatTime(item.startTime)}–{formatTime(item.endTime)}
+              </Text>
+              <Text
+                style={{
+                  color:
+                    status === "CONFIRMED"
+                      ? "#166246"
+                      : status === "PENDING"
+                        ? "#855207"
+                        : "#526477",
+                  backgroundColor:
+                    status === "CONFIRMED"
+                      ? "#e5f4ec"
+                      : status === "PENDING"
+                        ? "#fff2d8"
+                        : "#f0f3f7",
+                  paddingHorizontal: 10,
+                  paddingVertical: 6,
+                  borderRadius: 8,
+                  fontWeight: "600",
+                }}
+              >
+                {agendaStatusLabels[status]}
+              </Text>
+            </View>
+            <Text style={styles.subtitle}>{item.room.name}</Text>
             <Text>
               Médico: {item.doctor.firstName} {item.doctor.lastName}
             </Text>
-            <Text>Reserva: {agendaStatusLabels[status]}</Text>
             {expiredHold && (
               <Text style={styles.muted}>
-                Retención vencida; sin confirmación del servidor.
+                El tiempo para completar el pago terminó. Actualiza para
+                consultar el estado más reciente.
               </Text>
             )}
             <Text>
@@ -248,27 +240,44 @@ function Agenda() {
                 : "Sin pago iniciado"}
             </Text>
             <Text>Total: {money(item.totalPrice)} MXN</Text>
-            <Text selectable style={styles.muted}>
-              Referencia: {item.id}
-            </Text>
+            <Action
+              title={
+                expandedId === item.id ? "Ocultar referencia" : "Ver referencia"
+              }
+              variant="quiet"
+              onPress={() =>
+                setExpandedId((current) =>
+                  current === item.id ? null : item.id,
+                )
+              }
+            />
+            {expandedId === item.id && (
+              <Text selectable style={styles.muted}>
+                Referencia: {item.id}
+              </Text>
+            )}
           </View>
         );
       })}
-      <Text>Página {filters.page}</Text>
-      <Action
-        title="Página anterior"
-        disabled={filters.page === 1 || agenda.loading}
-        onPress={() => setFilters((f) => ({ ...f, page: f.page - 1 }))}
-      />
-      <Action
-        title="Página siguiente"
-        disabled={agenda.loading || !page?.hasMore}
-        onPress={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}
-      />
-      <Action
-        title="Volver al inicio"
-        onPress={() => router.replace("/home")}
-      />
+      {(filters.page > 1 || page?.hasMore) && (
+        <View style={styles.card}>
+          <Text style={styles.muted}>Página {filters.page}</Text>
+          <View style={styles.row}>
+            <Action
+              title="Anterior"
+              variant="secondary"
+              disabled={filters.page === 1 || agenda.loading}
+              onPress={() => setFilters((f) => ({ ...f, page: f.page - 1 }))}
+            />
+            <Action
+              title="Siguiente"
+              variant="secondary"
+              disabled={agenda.loading || !page?.hasMore}
+              onPress={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}
+            />
+          </View>
+        </View>
+      )}
     </Page>
   );
 }

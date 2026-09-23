@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
+import { AuthInput as FormInput } from "./auth-input";
 import { useFocusEffect } from "expo-router";
 import axios from "axios";
 import { Action, LoadState, styles } from "./booking-ui";
 import { useResource } from "../hooks/use-resource";
 import { businessDate, formatTime } from "../services/booking";
-import { blockInput, blocksOnDate } from "../services/block-form";
+import { blockErrors, blockInput, blocksOnDate } from "../services/block-form";
 import {
   createRoomBlock,
   getRoomBlocks,
@@ -18,9 +19,11 @@ import { session } from "../services/api";
 export function RoomBlocksPanel({
   room,
   date,
+  onBusyChange,
 }: {
   room: AgendaRoom;
   date: string;
+  onBusyChange?(busy: boolean): void;
 }) {
   const read = useCallback(
     (signal: AbortSignal) => {
@@ -33,6 +36,9 @@ export function RoomBlocksPanel({
   const [start, setStart] = useState("08");
   const [end, setEnd] = useState("09");
   const [reason, setReason] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const errors = submitted ? blockErrors(date, start, end, reason) : {};
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<RoomBlock | null>(null);
@@ -59,6 +65,9 @@ export function RoomBlocksPanel({
     let input;
     if (action === "create") {
       if (!room.active) return;
+      setSubmitted(true);
+      setMessage(null);
+      if (Object.keys(blockErrors(date, start, end, reason)).length) return;
       try {
         input = blockInput(date, start, end, reason);
       } catch (error) {
@@ -70,6 +79,7 @@ export function RoomBlocksPanel({
     const current = () => active.current && session.getVersion() === version;
     inFlight.current = true;
     setBusy(true);
+    onBusyChange?.(true);
     setMessage(null);
     try {
       if (input) await createRoomBlock(room.id, input);
@@ -77,7 +87,11 @@ export function RoomBlocksPanel({
       if (current()) {
         setMessage(input ? "Bloqueo creado." : "Bloqueo retirado.");
         setRemoving(null);
-        if (input) setReason("");
+        if (input) {
+          setReason("");
+          setSubmitted(false);
+          setCreating(false);
+        }
       }
     } catch (error) {
       if (current()) {
@@ -98,6 +112,7 @@ export function RoomBlocksPanel({
     } finally {
       if (current()) await blocks.reload();
       inFlight.current = false;
+      onBusyChange?.(false);
       if (mounted.current && session.getVersion() === version) setBusy(false);
     }
   }
@@ -109,19 +124,23 @@ export function RoomBlocksPanel({
   };
   return (
     <View style={styles.card}>
-      <Text style={styles.subtitle}>Bloqueos · {room.name}</Text>
+      <Text style={styles.subtitle}>Horarios bloqueados · {room.name}</Text>
       <Text style={styles.muted}>
-        {date} · Hora de Ciudad de México. Los bloqueos impiden nuevas reservas.
+        Consulta los bloqueos del día o agrega uno nuevo.
       </Text>
       <LoadState {...blocks} />
       {message && <Text accessibilityRole="alert">{message}</Text>}
       <Action
         title={blocks.loading ? "Cargando bloqueos…" : "Actualizar bloqueos"}
+        variant="quiet"
         disabled={busy || blocks.loading}
         onPress={() => void blocks.reload()}
       />
       {blocks.data && blocksOnDate(blocks.data, date).length === 0 && (
-        <Text>No hay bloqueos para este día.</Text>
+        <Text style={styles.muted}>
+          No hay bloqueos este día. La disponibilidad depende de las reservas
+          existentes.
+        </Text>
       )}
       {blocks.data &&
         blocksOnDate(blocks.data, date).map((block) => (
@@ -146,6 +165,7 @@ export function RoomBlocksPanel({
                 />
                 <Action
                   title="Conservar bloqueo"
+                  variant="quiet"
                   disabled={busy}
                   onPress={() => setRemoving(null)}
                 />
@@ -153,17 +173,34 @@ export function RoomBlocksPanel({
             ) : (
               <Action
                 title="Retirar bloqueo"
+                variant="danger"
                 disabled={busy || blocks.loading}
                 onPress={() => setRemoving(block)}
               />
             )}
           </View>
         ))}
-      {room.active ? (
+      {room.active && !creating && (
+        <Action
+          title="Bloquear un horario"
+          disabled={busy || blocks.loading || !!blocks.error || !!removing}
+          onPress={() => {
+            setCreating(true);
+            setMessage(null);
+          }}
+        />
+      )}
+      {room.active && creating ? (
         <>
-          <Text style={styles.subtitle}>Crear bloqueo para {date}</Text>
+          <Text style={styles.subtitle}>Nuevo bloqueo</Text>
+          <Text style={styles.muted}>
+            Elige las horas en formato de 24 horas. No modifica reservas
+            existentes.
+          </Text>
+          {errors.date && <Text accessibilityRole="alert">{errors.date}</Text>}
           <Text>Hora de inicio (08–20)</Text>
-          <TextInput
+          <FormInput
+            error={errors.start}
             accessibilityLabel="Hora de inicio del bloqueo"
             style={inputStyle}
             value={start}
@@ -173,7 +210,8 @@ export function RoomBlocksPanel({
             editable={!busy}
           />
           <Text>Hora de fin (09–21)</Text>
-          <TextInput
+          <FormInput
+            error={errors.end}
             accessibilityLabel="Hora de fin del bloqueo"
             style={inputStyle}
             value={end}
@@ -183,7 +221,8 @@ export function RoomBlocksPanel({
             editable={!busy}
           />
           <Text>Motivo (opcional)</Text>
-          <TextInput
+          <FormInput
+            error={errors.reason}
             accessibilityLabel="Motivo del bloqueo"
             style={inputStyle}
             value={reason}
@@ -192,16 +231,27 @@ export function RoomBlocksPanel({
             editable={!busy}
           />
           <Action
-            title={busy && !removing ? "Guardando…" : "Crear bloqueo"}
+            title={busy && !removing ? "Guardando…" : "Confirmar bloqueo"}
             disabled={busy || blocks.loading || !!blocks.error || !!removing}
             onPress={() => void mutate("create")}
           />
+          <Action
+            title="Cancelar"
+            variant="quiet"
+            disabled={busy}
+            onPress={() => {
+              setCreating(false);
+              setSubmitted(false);
+              setReason("");
+              setMessage(null);
+            }}
+          />
         </>
-      ) : (
+      ) : !room.active ? (
         <Text>
           El consultorio está inactivo. Puedes consultar y retirar sus bloqueos.
         </Text>
-      )}
+      ) : null}
     </View>
   );
 }

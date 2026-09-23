@@ -14,7 +14,12 @@ export function Page({ children }: PropsWithChildren) {
       style={{ flex: 1, backgroundColor: "#f7f8fa" }}
       edges={["bottom", "left", "right"]}
     >
-      <ScrollView contentContainerStyle={styles.page}>{children}</ScrollView>
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.page}
+      >
+        {children}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -23,10 +28,12 @@ export function Action({
   title,
   onPress,
   disabled = false,
+  variant = "primary",
 }: {
   title: string;
   onPress(): void;
   disabled?: boolean;
+  variant?: "primary" | "secondary" | "quiet" | "danger";
 }) {
   return (
     <Pressable
@@ -34,9 +41,25 @@ export function Action({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[styles.button, disabled && { opacity: 0.45 }]}
+      style={[
+        styles.button,
+        variant === "secondary" && { backgroundColor: "#eaf1f8" },
+        variant === "quiet" && { backgroundColor: "transparent" },
+        variant === "danger" && { backgroundColor: "#fff0ed" },
+        disabled && { opacity: 0.45 },
+      ]}
     >
-      <Text style={styles.buttonText}>{title}</Text>
+      <Text
+        style={[
+          styles.buttonText,
+          (variant === "secondary" || variant === "quiet") && {
+            color: "#1765ae",
+          },
+          variant === "danger" && { color: "#a12b20" },
+        ]}
+      >
+        {title}
+      </Text>
     </Pressable>
   );
 }

@@ -13,7 +13,15 @@ require.extensions[".ts"] = (module, filename) =>
     }).outputText,
     filename,
   );
-const { roomPayload } = require("../src/services/room-form.ts");
+const { roomErrors, roomPayload } = require("../src/services/room-form.ts");
+test('room validation reports each invalid field and clears only corrected fields', () => {
+  const form = { name: ' ', description: 'x'.repeat(2001), price: '0' };
+  assert.deepEqual(Object.keys(roomErrors(form)), ['name', 'description', 'price']);
+  const corrected = { ...form, name: 'Consultorio', price: '250,50' };
+  assert.deepEqual(Object.keys(roomErrors(corrected)), ['description']);
+  assert.throws(() => roomPayload(corrected));
+  assert.deepEqual(roomErrors({ ...corrected, description: '' }), {});
+});
 test("accepts decimal comma and preserves cents without passing unrelated fields", () => {
   assert.deepEqual(
     roomPayload({

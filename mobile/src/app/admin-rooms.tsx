@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Text,
-  TextInput,
-  View,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+import { Text, View, KeyboardAvoidingView, Platform } from "react-native";
 import { router } from "expo-router";
 import axios from "axios";
 import { Action, LoadState, Page, styles } from "../components/booking-ui";
@@ -16,10 +10,12 @@ import {
   saveRoom,
   setRoomActive,
 } from "../services/admin-rooms";
-import { roomPayload, type RoomForm } from "../services/room-form";
+import { roomErrors, roomPayload, type RoomForm } from "../services/room-form";
+import { AuthInput as FormInput } from "../components/auth-input";
 import type { Room } from "../services/rooms";
 import { money } from "../services/booking";
 import { session } from "../services/api";
+import { AdminNav } from "../components/admin-ui";
 
 export default function AdminRooms() {
   const user = useResource(getCurrentUser);
@@ -99,10 +95,18 @@ function Management() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <Page>
-        <Text style={styles.title}>Gestionar consultorios</Text>
+        <AdminNav current="/admin-rooms" disabled={busy} />
+        <Text style={styles.title}>
+          {editing
+            ? editing === "new"
+              ? "Nuevo consultorio"
+              : "Editar consultorio"
+            : "Consultorios"}
+        </Text>
         <Text style={styles.muted}>
-          Los nuevos precios se aplican a nuevas reservas. Desactivar conserva
-          las reservas existentes.
+          {editing
+            ? "Los cambios de precio se aplican solo a nuevas reservas."
+            : "Administra tus espacios y su precio por hora."}
         </Text>
         {message && <Text accessibilityRole="alert">{message}</Text>}
         {editing ? (
@@ -129,6 +133,7 @@ function Management() {
             />
             <Action
               title="Actualizar consultorios"
+              variant="quiet"
               disabled={busy || rooms.loading}
               onPress={() => void rooms.reload()}
             />
@@ -137,13 +142,21 @@ function Management() {
             {rooms.data?.map((room) => (
               <View key={room.id} style={styles.card}>
                 <Text style={styles.subtitle}>{room.name}</Text>
-                <Text>
-                  {room.active ? "Activo" : "Inactivo"} ·{" "}
-                  {money(room.pricePerHour)} MXN / hora
+                <Text
+                  style={{
+                    color: room.active ? "#166246" : "#526477",
+                    fontWeight: "600",
+                  }}
+                >
+                  {room.active ? "Disponible para reservar" : "Inactivo"}
                 </Text>
-                <Text>{room.description || "Sin descripción"}</Text>
+                <Text>{money(room.pricePerHour)} MXN / hora</Text>
+                {!!room.description && (
+                  <Text style={styles.muted}>{room.description}</Text>
+                )}
                 <Action
                   title={`Editar ${room.name}`}
+                  variant="secondary"
                   disabled={busy}
                   onPress={() => {
                     setToggle(null);
@@ -171,6 +184,7 @@ function Management() {
                     />
                     <Action
                       title="Cancelar"
+                      variant="quiet"
                       disabled={busy}
                       onPress={() => setToggle(null)}
                     />
@@ -178,6 +192,7 @@ function Management() {
                 ) : (
                   <Action
                     title={room.active ? "Desactivar" : "Activar"}
+                    variant={room.active ? "danger" : "secondary"}
                     disabled={busy}
                     onPress={() => setToggle(room)}
                   />
@@ -186,11 +201,6 @@ function Management() {
             ))}
           </>
         )}
-        <Action
-          title="Volver al inicio"
-          disabled={busy}
-          onPress={() => router.replace("/home")}
-        />
       </Page>
     </KeyboardAvoidingView>
   );
@@ -212,7 +222,8 @@ function RoomEditor({
     description: room?.description ?? "",
     price: room?.pricePerHour ?? "",
   });
-  const [error, setError] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState(false);
+  const errors = submitted ? roomErrors(form) : {};
   const change = (field: keyof RoomForm, value: string) =>
     setForm((f) => ({ ...f, [field]: value }));
   const input = {
@@ -222,21 +233,16 @@ function RoomEditor({
     borderRadius: 8,
   };
   function submit() {
-    try {
-      const data = roomPayload(form);
-      setError(null);
-      save(data);
-    } catch (failure) {
-      setError((failure as Error).message);
-    }
+    if (busy) return;
+    setSubmitted(true);
+    if (Object.keys(roomErrors(form)).length) return;
+    save(roomPayload(form));
   }
   return (
     <View style={styles.card}>
-      <Text style={styles.subtitle}>
-        {room ? "Editar consultorio" : "Nuevo consultorio"}
-      </Text>
       <Text>Nombre</Text>
-      <TextInput
+      <FormInput
+        error={errors.name}
         accessibilityLabel="Nombre del consultorio"
         style={input}
         value={form.name}
@@ -245,7 +251,8 @@ function RoomEditor({
         editable={!busy}
       />
       <Text>Descripción</Text>
-      <TextInput
+      <FormInput
+        error={errors.description}
         accessibilityLabel="Descripción del consultorio"
         style={input}
         value={form.description}
@@ -255,7 +262,8 @@ function RoomEditor({
         editable={!busy}
       />
       <Text>Precio por hora (MXN)</Text>
-      <TextInput
+      <FormInput
+        error={errors.price}
         accessibilityLabel="Precio por hora en pesos"
         style={input}
         value={form.price}
@@ -263,13 +271,17 @@ function RoomEditor({
         keyboardType="decimal-pad"
         editable={!busy}
       />
-      {error && <Text accessibilityRole="alert">{error}</Text>}
       <Action
         title={busy ? "Guardando…" : "Guardar consultorio"}
         disabled={busy}
         onPress={submit}
       />
-      <Action title="Cancelar edición" disabled={busy} onPress={cancel} />
+      <Action
+        title="Cancelar edición"
+        variant="quiet"
+        disabled={busy}
+        onPress={cancel}
+      />
     </View>
   );
 }

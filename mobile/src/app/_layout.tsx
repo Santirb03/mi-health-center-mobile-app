@@ -6,7 +6,9 @@ import { PaymentProvider } from "../providers/payment-provider";
 export default function RootLayout() {
   return (
     <SessionProvider>
-      <PaymentProvider><SessionNavigator /></PaymentProvider>
+      <PaymentProvider>
+        <SessionNavigator />
+      </PaymentProvider>
     </SessionProvider>
   );
 }
@@ -59,8 +61,18 @@ function SessionNavigator() {
       <Stack.Screen name="index" />
       <Stack.Protected guard={authenticated}>
         <Stack.Screen name="home" />
-        <Stack.Screen name="admin-rooms" options={{ headerShown: true, title: 'Gestionar consultorios' }} />
-        <Stack.Screen name="admin-agenda" options={{ headerShown: true, title: 'Agenda del administrador' }} />
+        <Stack.Screen
+          name="admin-rooms"
+          options={{ headerShown: true, title: "Administración" }}
+        />
+        <Stack.Screen
+          name="admin-agenda"
+          options={{ headerShown: true, title: "Administración" }}
+        />
+        <Stack.Screen
+          name="admin-blocks"
+          options={{ headerShown: true, title: "Administración" }}
+        />
         <Stack.Screen
           name="rooms/[id]"
           options={{ headerShown: true, title: "Consultorio" }}

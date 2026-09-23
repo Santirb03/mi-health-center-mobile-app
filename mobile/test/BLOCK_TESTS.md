@@ -1,6 +1,6 @@
-# Bloqueos desde la agenda
+# Bloqueos de horario
 
-En Agenda del administrador, selecciona un consultorio y una fecha. La sección Bloqueos muestra los intervalos que intersectan ese día, incluso bloqueos de varios días creados previamente. No depende del filtro de estado de reservas.
+Desde Administración, abre Bloqueos. Selecciona primero un consultorio y después una fecha mediante el calendario. La lista muestra los intervalos que intersectan ese día, incluso bloqueos de varios días creados previamente. La agenda de reservas tiene su propia sección.
 
 El formulario crea bloqueos futuros de un solo día, en horas completas entre 08 y 21 de Ciudad de México. El motivo es opcional. Consultorios inactivos permiten consulta y retiro, pero no creación. Retirar un bloqueo requiere confirmación en pantalla y no modifica reservas.
 
@@ -10,12 +10,13 @@ Las mutaciones tienen protección de doble toque y no se reintentan automáticam
 
 ## Prueba manual
 
-1. Inicia sesión como administrador. En la agenda selecciona un consultorio activo, mañana y un intervalo libre (por ejemplo 10 a 12). Crea un bloqueo con motivo Mantenimiento.
+1. Inicia sesión como administrador. Abre Bloqueos y selecciona un consultorio activo y mañana. Toca Bloquear un horario; el formulario aparece solo entonces. Usa un intervalo libre (por ejemplo 10 a 12) y confirma con motivo Mantenimiento. Al guardar, el formulario debe cerrarse y aparecer el bloqueo en la lista.
 2. Verifica el intervalo y motivo en la lista. Desde disponibilidad del consultorio, ese intervalo debe aparecer no disponible después de actualizar.
 3. Intenta otro bloqueo que se cruce: debe rechazarse. Prueba también sobre una reserva confirmada o una retención vigente: no debe alterar la reserva existente.
 4. Toca Retirar bloqueo y después Conservar bloqueo: debe permanecer. Confirma el retiro: debe desaparecer, y disponibilidad debe liberarse si no existe otra ocupación.
 5. Comprueba horario inverso, pasado y fuera de 08–21. Cambia día y consultorio: no deben mezclarse formularios ni resultados.
 6. Con cuenta DOCTOR no debe existir acceso a estas operaciones. Si falla la conexión, debe mostrarse error y permitir actualizar, sin afirmar que la operación tuvo éxito.
+7. Durante un guardado, no debe poder cambiarse consultorio, fecha o sección con los controles de la pantalla. Cancelar el formulario no crea un bloqueo. En un consultorio inactivo no aparece la acción de creación.
 
 ## Verificación automatizada
 
