@@ -3,7 +3,7 @@
 ## Comportamiento
 
 - Bandeja privada por usuario: confirmación, cancelación y reembolso solicitado.
-- Los triggers de PostgreSQL crean los avisos dentro de la misma transacción del cambio. La clave única evita duplicados y un rollback también elimina el aviso.
+- Los triggers de PostgreSQL crean los avisos de confirmación/cancelación dentro de la misma transacción del cambio. Desde la migración del 28/09/2026, los avisos de reembolso los crea el conciliador al leer su estado en Stripe. La clave única evita duplicados y un rollback también elimina el aviso.
 - La migración no crea avisos históricos.
 - API autenticada: `GET /notifications` (últimos 100 + total no leído), `PATCH /notifications/:id/read`, `PATCH /notifications/read-all`.
 - Recordatorios locales opcionales en Android/iOS: una hora antes, exclusivamente reservas confirmadas; sin sonido ni vibración, canal Android de importancia baja. No se envían pushes, correos ni SMS.

@@ -183,7 +183,11 @@ describe('Administrative agenda HTTP boundary', () => {
     expect(query.select.doctor).toEqual({
       select: { firstName: true, lastName: true },
     });
-    expect(query.select.payment).toEqual({ select: { status: true } });
+    expect(query.select.payment).toEqual({ select: {
+      status: true,
+      refunds: { select: { amount: true, status: true } },
+      refundSync: { select: { automatic: true, lastCheckedAt: true, needsReview: true, lastError: true } },
+    } });
   });
   it('projects expired holds without changing persisted status and signals another page', async () => {
     prisma.reservation.findMany.mockResolvedValue(

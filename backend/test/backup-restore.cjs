@@ -107,6 +107,9 @@ async function main() {
   const patient = await prisma.patient.create({ data: { doctorId, firstName: 'Paciente', lastName: 'Ficticio' } });
   await prisma.appointment.create({ data: { doctorId, patientId: patient.id, roomId: room.id, startTime, endTime } });
   await prisma.stripeWebhookEvent.create({ data: { id: 'evt_synthetic_backup', type: 'payment_intent.succeeded' } });
+  const fixturePayment = await prisma.payment.findUniqueOrThrow({ where: { reservationId: reservation.id } });
+  await prisma.refundSync.create({ data: { paymentId: fixturePayment.id } });
+  await prisma.refund.create({ data: { id: 're_synthetic_backup', paymentId: fixturePayment.id, amount: 1000, status: 'pending', createdAt: startTime } });
   const expected = await snapshot(source);
   assert.ok(expected.rows._prisma_migrations.length > 0);
   assert.ok(expected.constraints.length > 0 && expected.indexes.length > 0);

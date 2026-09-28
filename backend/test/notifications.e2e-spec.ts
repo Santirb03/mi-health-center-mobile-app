@@ -55,9 +55,9 @@ describe('Internal notifications', () => {
     const read = await request(app.getHttpServer()).get('/notifications').auth(token, { type: 'bearer' }).expect(200);
     expect(read.body.unreadCount).toBe(0);
   });
-  it('adds one internal refund notice despite repeated status updates', async () => {
+  it('does not claim a Stripe refund based only on a local payment status change', async () => {
     const payment = await prisma.payment.create({ data: { reservationId, amount: 100, status: 'PAID' } });
     for (let i = 0; i < 2; i++) await prisma.payment.update({ where: { id: payment.id }, data: { status: 'REFUNDED' } });
-    expect(await prisma.notification.count({ where: { eventKey: `${payment.id}:REFUNDED` } })).toBe(1);
+    expect(await prisma.notification.count({ where: { eventKey: `${payment.id}:REFUNDED` } })).toBe(0);
   });
 });

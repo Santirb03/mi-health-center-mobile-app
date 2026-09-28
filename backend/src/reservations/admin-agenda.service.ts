@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { refundSummarySelection } from '../payments/refunds';
 import { AgendaQueryDto } from './dto/agenda-query.dto';
 
 export function agendaDay(date: string) {
@@ -65,7 +66,7 @@ export class AdminAgendaService {
         totalPrice: true,
         room: { select: { id: true, name: true, active: true } },
         doctor: { select: { firstName: true, lastName: true } },
-        payment: { select: { status: true } },
+        payment: { select: refundSummarySelection },
       },
     });
     return {

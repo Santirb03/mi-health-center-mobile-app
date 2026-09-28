@@ -109,7 +109,7 @@ model Reservation {
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
-  doctor  DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  doctor  DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   room    Room          @relation(fields: [roomId], references: [id])
   payment Payment?
 
@@ -171,7 +171,9 @@ model Payment {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  refunds Refund[]
+  refundSync RefundSync?
 
   @@map("payments")
 }
@@ -197,4 +199,36 @@ model Notification {
   @@index([userId, createdAt, id])
   @@index([userId, readAt])
   @@map("notifications")
+}
+
+model Refund {
+  id String @id
+  paymentId String
+  amount Int
+  status String
+  failureReason String?
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  @@index([paymentId])
+  @@map("refunds")
+}
+
+model RefundSync {
+  id String @id @default(uuid())
+  paymentId String @unique
+  automatic Boolean @default(false)
+  attemptedAt DateTime?
+  version Int @default(0)
+  leaseToken String?
+  leaseUntil DateTime?
+  nextAttemptAt DateTime @default(now())
+  lastCheckedAt DateTime?
+  needsReview Boolean @default(false)
+  lastError String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  @@index([nextAttemptAt, leaseUntil])
+  @@map("refund_sync")
 }

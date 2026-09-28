@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { syncReminders } from '../../services/reminders';
+import { RefundStatus } from '../../components/refund-status';
 import { Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Action, LoadState, Page, styles } from "../../components/booking-ui";
@@ -48,6 +49,7 @@ export default function ReservationDetail() {
             {reservationLabel(reservation, now)}
           </Text>
           <Text>Total: {money(reservation.totalPrice)} MXN</Text>
+          <RefundStatus payment={reservation.payment} />
           {reservation.status === "CONFIRMED" && (
             <Text style={styles.muted}>
               Tu horario está confirmado. No necesitas volver a pagar esta reserva.

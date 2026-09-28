@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { PaymentSummary } from '../components/refund-status';
 import type { Room } from "./rooms";
 import type { ReservationPage, ReservationSection } from './reservation-pager';
 
@@ -11,6 +12,7 @@ export interface Reservation {
   status: "PENDING" | "CONFIRMED" | "CANCELLED" | "COMPLETED" | "EXPIRED";
   expiresAt: string | null;
   room?: Room;
+  payment?: PaymentSummary | null;
 }
 
 export interface ReservationInput {

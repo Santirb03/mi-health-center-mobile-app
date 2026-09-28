@@ -34,7 +34,7 @@ Configura el proveedor con backend como directorio de trabajo, el comando de bui
 
 ## Verificar la entrega
 
-Comprueba por HTTPS /health y /health/ready (ambas deben devolver 200), consulta los logs sin exponer secretos y verifica registro/login. Configura en Stripe de prueba el endpoint /payments/webhook y los eventos payment_intent.succeeded, payment_intent.payment_failed y payment_intent.canceled. Prueba una reserva y un pago desde el teléfono, confirmando el estado en la agenda. Ningún healthcheck confirma por sí solo que Stripe funcione. La app debe apuntar a la URL HTTPS publicada.
+Comprueba por HTTPS /health y /health/ready (ambas deben devolver 200), consulta los logs sin exponer secretos y verifica registro/login. Configura en Stripe de prueba el endpoint /payments/webhook y los eventos payment_intent.succeeded, payment_intent.payment_failed, payment_intent.canceled, refund.created, refund.updated, refund.failed y charge.refunded. Prueba una reserva y un pago desde el teléfono, confirmando el estado en la agenda. Ningún healthcheck confirma por sí solo que Stripe funcione. La app debe apuntar a la URL HTTPS publicada. Revisa [conciliación de reembolsos](REFUNDS.md) y el [procedimiento del primer administrador](ADMIN_BOOTSTRAP.md).
 
 ## Ensayo local aislado
 

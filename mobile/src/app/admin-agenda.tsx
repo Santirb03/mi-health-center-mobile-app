@@ -6,6 +6,7 @@ import { useResource } from "../hooks/use-resource";
 import { useNow } from "../hooks/use-now";
 import { AdminNav, Choice, DateNavigator } from "../components/admin-ui";
 import { businessDate, formatTime, money } from "../services/booking";
+import { RefundStatus } from '../components/refund-status';
 import {
   agendaStatusLabels,
   getAgenda,
@@ -231,14 +232,15 @@ function Agenda() {
             <Text>
               Pago:{" "}
               {item.payment
-                ? {
+                ? (item.payment.status === 'REFUNDED' && !item.payment.refundSync?.lastCheckedAt ? 'Devolución por verificar' : {
                     PENDING: "Pendiente",
                     PAID: "Pagado",
                     FAILED: "Fallido",
                     REFUNDED: "Reembolsado",
-                  }[item.payment.status]
+                  }[item.payment.status])
                 : "Sin pago iniciado"}
             </Text>
+            <RefundStatus payment={item.payment} />
             <Text>Total: {money(item.totalPrice)} MXN</Text>
             <Action
               title={

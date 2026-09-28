@@ -1,4 +1,5 @@
 import { api } from "./api";
+import type { PaymentSummary } from '../components/refund-status';
 import type { Reservation } from "./reservations";
 
 export type AgendaStatus = Reservation["status"];
@@ -30,7 +31,7 @@ export interface AgendaItem {
   expiresAt: string | null;
   room: AgendaRoom;
   doctor: { firstName: string; lastName: string };
-  payment: { status: "PENDING" | "PAID" | "FAILED" | "REFUNDED" } | null;
+  payment: PaymentSummary | null;
 }
 export interface AgendaPage {
   items: AgendaItem[];

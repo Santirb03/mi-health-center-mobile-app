@@ -6,6 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
+import { enqueueRefundSync, RefundReconciler } from './refunds';
 
 @Injectable()
 export class PaymentsService {
@@ -98,8 +99,38 @@ export class PaymentsService {
         return result;
     }
 
+    async reconcileRefundsForIntent(intentId: string) {
+        await new RefundReconciler(this.prisma, this.stripe).forIntent(intentId);
+    }
+
+    async processDueRefunds() {
+        const jobs = await this.prisma.refundSync.findMany({
+            where: { nextAttemptAt: { lte: new Date() }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
+            orderBy: { nextAttemptAt: 'asc' }, take: 10,
+        });
+        for (const job of jobs) {
+            try { await new RefundReconciler(this.prisma, this.stripe).run(job.id); }
+            catch { /* The job records a sanitized error and a retry deadline. */ }
+        }
+    }
+
     async handleStripeWebhook(event: Stripe.Event) {
-        return this.prisma.$transaction(async (tx) => {
+        const refundEvent = ['refund.created', 'refund.updated', 'refund.failed', 'charge.refunded'].includes(event.type);
+        if (refundEvent) {
+            const object = event.data.object as Stripe.Refund | Stripe.Charge;
+            const intent = typeof object.payment_intent === 'string' ? object.payment_intent : object.payment_intent?.id;
+            if (!intent) return { duplicate: false, ignored: true };
+            const payment = await this.prisma.payment.findUnique({ where: { transactionId: intent } });
+            if (!payment) throw new NotFoundException('Payment not found for refund');
+            await this.prisma.$transaction(async tx => {
+                await enqueueRefundSync(tx, payment.id);
+                await tx.stripeWebhookEvent.createMany({ data: [{ id: event.id, type: event.type }], skipDuplicates: true });
+            });
+            // Re-read Stripe rather than trusting potentially out-of-order events.
+            await this.reconcileRefundsForIntent(intent);
+            return { duplicate: false, processed: true };
+        }
+        const result = await this.prisma.$transaction(async (tx) => {
             try {
                 await tx.stripeWebhookEvent.create({
                     data: {
@@ -210,25 +241,8 @@ export class PaymentsService {
                     holdExpiredBeforePayment ||
                     reservationCannotBeConfirmed
                 ) {
-                    await this.stripe.refunds.create(
-                        {
-                            payment_intent:
-                                paymentIntent.id,
-                        },
-                        {
-                            idempotencyKey:
-                                `expired-reservation-refund-${paymentIntent.id}`,
-                        },
-                    );
-
-                    await tx.payment.update({
-                        where: {
-                            id: payment.id,
-                        },
-                        data: {
-                            status: 'REFUNDED',
-                        },
-                    });
+                    await enqueueRefundSync(tx, payment.id, true);
+                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID' } });
 
                     if (
                         reservation.status ===
@@ -247,7 +261,7 @@ export class PaymentsService {
                     return {
                         duplicate: false,
                         processed: true,
-                        refunded: true,
+                        refundRequested: true,
                     };
                 }
 
@@ -298,25 +312,8 @@ export class PaymentsService {
                 });
 
                 if (conflictingReservation || conflictingBlock) {
-                    await this.stripe.refunds.create(
-                        {
-                            payment_intent:
-                                paymentIntent.id,
-                        },
-                        {
-                            idempotencyKey:
-                                `reservation-conflict-refund-${paymentIntent.id}`,
-                        },
-                    );
-
-                    await tx.payment.update({
-                        where: {
-                            id: payment.id,
-                        },
-                        data: {
-                            status: 'REFUNDED',
-                        },
-                    });
+                    await enqueueRefundSync(tx, payment.id, true);
+                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID' } });
 
                     if (
                         reservation.status ===
@@ -335,10 +332,11 @@ export class PaymentsService {
                     return {
                         duplicate: false,
                         processed: true,
-                        refunded: true,
+                        refundRequested: true,
                     };
                 }
 
+                await enqueueRefundSync(tx, payment.id);
                 await tx.payment.update({
                     where: {
                         id: payment.id,
@@ -386,6 +384,12 @@ export class PaymentsService {
                 duplicate: false,
                 processed: true,
             };
-        });
+        }, { maxWait: 5000, timeout: 5000 });
+        // This runs after commit, including for replayed success events. A failed
+        // attempt remains in refund_sync even when Stripe stops retrying events.
+        if (event.type === 'payment_intent.succeeded') {
+            await this.reconcileRefundsForIntent((event.data.object as Stripe.PaymentIntent).id);
+        }
+        return result;
     }
 }

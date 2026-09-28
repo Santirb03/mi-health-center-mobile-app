@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PaymentsService } from '../src/payments/payments.service';
+import { RefundReconciler } from '../src/payments/refunds';
 import { ReservationsService } from '../src/reservations/reservations.service';
 import { RoomsService } from '../src/rooms/rooms.service';
 import { Client } from 'pg';
@@ -26,6 +27,7 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
   let reservations: ReservationsService;
   let rooms: RoomsService;
   const refund = jest.fn();
+  const storedRefunds: any[] = [];
   const createIntent = jest.fn();
   const retrieveIntent = jest.fn();
 
@@ -40,7 +42,7 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
     rooms = new RoomsService(prisma);
     // No network calls to Stripe. Database transactions and locks remain real.
     (payments as unknown as { stripe: unknown }).stripe = {
-      refunds: { create: refund },
+      refunds: { create: refund, list: jest.fn(async ({ payment_intent }) => ({ data: storedRefunds.filter(r => r.payment_intent === payment_intent), has_more: false })) },
       paymentIntents: {
         create: createIntent,
         retrieve: retrieveIntent,
@@ -52,9 +54,11 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
     retrieveIntent.mockReset().mockImplementation(async (id: string) => ({
       id, client_secret: `secret_${id}`, status: 'requires_payment_method',
     }));
-    refund
-      .mockReset()
-      .mockResolvedValue({ id: 're_test', status: 'succeeded' });
+    storedRefunds.length = 0;
+    refund.mockReset().mockImplementation(async params => {
+      const result = { ...params, id: `re_${randomUUID()}`, status: 'succeeded', currency: 'mxn', created: Math.floor(Date.now() / 1000) };
+      storedRefunds.push(result); return result;
+    });
   });
   afterAll(async () => {
     await prisma?.$disconnect();
@@ -418,5 +422,123 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
       status: 'CANCELLED',
       payment: { status: 'REFUNDED' },
     });
+  });
+
+  it('tracks pending, success and bank failure without trusting stale event payloads', async () => {
+    const f = await fixture();
+    await reservations.cancel(f.user.id, f.reservation.id);
+    refund.mockImplementationOnce(async params => {
+      const value = { ...params, id: `re_${randomUUID()}`, status: 'pending', currency: 'mxn', created: Math.floor(Date.now() / 1000) };
+      storedRefunds.push(value); return value;
+    });
+    await payments.handleStripeWebhook(f.event);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('PAID');
+    expect((await prisma.refund.findMany({ where: { paymentId: f.payment.id } }))[0].status).toBe('pending');
+    const remote = storedRefunds[0];
+    remote.status = 'succeeded';
+    const update = { id: `evt_${randomUUID()}`, type: 'refund.updated', data: { object: { ...remote, status: 'pending' } } } as Stripe.Event;
+    await payments.handleStripeWebhook(update);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('REFUNDED');
+    remote.status = 'failed'; remote.failure_reason = 'declined';
+    await payments.handleStripeWebhook({ ...update, id: `evt_${randomUUID()}`, type: 'refund.failed' } as Stripe.Event);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('PAID');
+    expect((await prisma.refundSync.findUniqueOrThrow({ where: { paymentId: f.payment.id } })).needsReview).toBe(true);
+    expect(refund).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles partial and full Dashboard refunds without cancelling the reservation', async () => {
+    const f = await fixture(false);
+    await payments.handleStripeWebhook(f.event);
+    const external = { id: `re_${randomUUID()}`, payment_intent: f.payment.transactionId, amount: 10000, currency: 'mxn', status: 'succeeded', created: Math.floor(Date.now() / 1000) };
+    storedRefunds.push(external);
+    const update = { id: `evt_${randomUUID()}`, type: 'charge.refunded', data: { object: { payment_intent: f.payment.transactionId } } } as Stripe.Event;
+    await payments.handleStripeWebhook(update);
+    expect(await state(f.reservation.id)).toMatchObject({ status: 'CONFIRMED', payment: { status: 'PAID' } });
+    storedRefunds.push({ ...external, id: `re_${randomUUID()}`, amount: 25000 });
+    await payments.handleStripeWebhook({ ...update, id: `evt_${randomUUID()}` });
+    expect(await state(f.reservation.id)).toMatchObject({ status: 'CONFIRMED', payment: { status: 'REFUNDED' } });
+    expect(refund).not.toHaveBeenCalled();
+  });
+
+  it('recovers an accepted Stripe refund after its response was lost', async () => {
+    const f = await fixture(); await reservations.cancel(f.user.id, f.reservation.id);
+    refund.mockImplementationOnce(async params => {
+      storedRefunds.push({ ...params, id: `re_${randomUUID()}`, status: 'succeeded', currency: 'mxn', created: Math.floor(Date.now() / 1000) });
+      throw new Error('lost response');
+    });
+    await expect(payments.handleStripeWebhook(f.event)).rejects.toThrow('durable retry');
+    expect((await prisma.refundSync.findUniqueOrThrow({ where: { paymentId: f.payment.id } })).lastError).toBe('reconciliation_failed');
+    await payments.handleStripeWebhook(f.event);
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('REFUNDED');
+  });
+
+  it('does not blindly retry an ambiguous attempt older than the idempotency window', async () => {
+    const f = await fixture();
+    await prisma.refundSync.create({ data: { paymentId: f.payment.id, automatic: true, attemptedAt: new Date(Date.now() - 25 * 3600000) } });
+    await payments.reconcileRefundsForIntent(f.payment.transactionId!);
+    expect(refund).not.toHaveBeenCalled();
+    expect((await prisma.refundSync.findUniqueOrThrow({ where: { paymentId: f.payment.id } })).lastError).toBe('ambiguous_old_attempt');
+  });
+
+  it('releases the room lock before waiting on Stripe', async () => {
+    const f = await fixture(); await reservations.cancel(f.user.id, f.reservation.id);
+    let release!: () => void; let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    refund.mockImplementationOnce(async params => {
+      entered(); await gate;
+      const value = { ...params, id: `re_${randomUUID()}`, status: 'succeeded', currency: 'mxn', created: Math.floor(Date.now() / 1000) };
+      storedRefunds.push(value); return value;
+    });
+    const work = payments.handleStripeWebhook(f.event);
+    await waiting;
+    try {
+      const available = await prisma.$queryRaw<Array<{ free: boolean }>>`SELECT pg_try_advisory_xact_lock(hashtext(${f.room.id})) AS free`;
+      expect(available[0].free).toBe(true);
+    } finally { release(); await work; }
+  });
+
+  it('prevents user, doctor and reservation deletes from cascading into financial history', async () => {
+    const f = await fixture(false);
+    await expect(prisma.user.delete({ where: { id: f.user.id } })).rejects.toMatchObject({ code: 'P2003' });
+    await expect(prisma.doctorProfile.delete({ where: { id: f.reservation.doctorId } })).rejects.toMatchObject({ code: 'P2003' });
+    await expect(prisma.reservation.delete({ where: { id: f.reservation.id } })).rejects.toMatchObject({ code: 'P2003' });
+    expect(await prisma.payment.findUnique({ where: { id: f.payment.id } })).not.toBeNull();
+  });
+
+  it('recovers when Stripe succeeds but the following DB transaction fails', async () => {
+    const f = await fixture();
+    await prisma.payment.update({ where: { id: f.payment.id }, data: { status: 'PAID' } });
+    const job = await prisma.refundSync.create({ data: { paymentId: f.payment.id, automatic: true } });
+    const brokenDatabase = { refundSync: prisma.refundSync, $transaction: async () => { throw new Error('DB unavailable'); } } as unknown as PrismaService;
+    const stripe = (payments as unknown as { stripe: Stripe }).stripe;
+    await expect(new RefundReconciler(brokenDatabase, stripe).run(job.id)).rejects.toThrow('durable retry');
+    expect(await prisma.refund.count({ where: { paymentId: f.payment.id } })).toBe(0);
+    await payments.reconcileRefundsForIntent(f.payment.transactionId!);
+    expect(refund).toHaveBeenCalledTimes(1);
+    expect(await prisma.refund.count({ where: { paymentId: f.payment.id } })).toBe(1);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('REFUNDED');
+  });
+
+  it('handles a refund event arriving before payment confirmation', async () => {
+    const f = await fixture(false);
+    const external = { id: `re_${randomUUID()}`, payment_intent: f.payment.transactionId, amount: 10000, currency: 'mxn', status: 'succeeded', created: Math.floor(Date.now() / 1000) };
+    storedRefunds.push(external);
+    await payments.handleStripeWebhook({ id: `evt_${randomUUID()}`, type: 'refund.created', data: { object: external } } as Stripe.Event);
+    expect((await state(f.reservation.id))?.payment?.status).toBe('PENDING');
+    await payments.handleStripeWebhook(f.event);
+    expect(await state(f.reservation.id)).toMatchObject({ status: 'CONFIRMED', payment: { status: 'PAID' } });
+    expect(await prisma.refund.count({ where: { paymentId: f.payment.id } })).toBe(1);
+    expect(refund).not.toHaveBeenCalled();
+  });
+
+  it('recovers abandoned leases and does not issue the remainder of a partial external refund', async () => {
+    const f = await fixture();
+    const job = await prisma.refundSync.create({ data: { paymentId: f.payment.id, automatic: true, leaseToken: 'crashed-process', leaseUntil: new Date(Date.now() - 1000) } });
+    storedRefunds.push({ id: `re_${randomUUID()}`, payment_intent: f.payment.transactionId, amount: 10000, currency: 'mxn', status: 'succeeded', created: Math.floor(Date.now() / 1000) });
+    await payments.reconcileRefundsForIntent(f.payment.transactionId!);
+    expect(refund).not.toHaveBeenCalled();
+    expect(await prisma.refundSync.findUnique({ where: { id: job.id } })).toMatchObject({ leaseToken: null, needsReview: true, lastError: 'automatic_refund_incomplete' });
   });
 });

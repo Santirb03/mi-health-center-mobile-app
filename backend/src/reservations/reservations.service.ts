@@ -10,6 +10,7 @@ import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReservationPageDto } from './dto/reservation-page.dto';
 import { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
+import { refundSummarySelection } from '../payments/refunds';
 
 const OPENING_HOUR = 8;
 const CLOSING_HOUR = 21;
@@ -412,6 +413,7 @@ export class ReservationsService {
                 },
                 include: {
                     room: true,
+                    payment: { select: refundSummarySelection },
                 },
             });
 

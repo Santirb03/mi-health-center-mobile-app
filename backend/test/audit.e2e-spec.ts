@@ -158,6 +158,10 @@ describe('Backend adversarial audit E2E', () => {
 
   afterAll(async () => {
     if (roomId) {
+      await prisma.refund.deleteMany({ where: { payment: { reservation: { roomId } } } });
+      await prisma.refundSync.deleteMany({ where: { payment: { reservation: { roomId } } } });
+    }
+    if (roomId) {
       await prisma.payment.deleteMany({
         where: {
           reservation: {

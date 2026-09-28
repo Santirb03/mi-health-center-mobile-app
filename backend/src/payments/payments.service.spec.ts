@@ -35,7 +35,9 @@ describe('PaymentsService', () => {
     const mockTxExecuteRaw = jest.fn();
     const mockTxRoomBlockFindFirst = jest.fn();
 
+    const mockRefundSyncUpsert = jest.fn();
     const mockTx = {
+        refundSync: { upsert: mockRefundSyncUpsert },
         roomBlock: {
             findFirst: mockTxRoomBlockFindFirst,
         },
@@ -98,6 +100,7 @@ describe('PaymentsService', () => {
             mockPrisma as any,
         );
 
+        jest.spyOn(service, 'reconcileRefundsForIntent').mockResolvedValue(undefined);
         (service as any).stripe = {
             paymentIntents: {
                 create: mockStripePaymentIntentsCreate,
@@ -487,9 +490,9 @@ describe('PaymentsService', () => {
                 mockTxReservationFindUnique.mockResolvedValue({ ...reservation, status: 'CANCELLED' });
                 return 1;
             });
-            await expect(service.handleStripeWebhook(event)).resolves.toMatchObject({ refunded: true });
+            await expect(service.handleStripeWebhook(event)).resolves.toMatchObject({ refundRequested: true });
             expect(mockTxReservationUpdate).not.toHaveBeenCalled();
-            expect(mockStripeRefundsCreate).toHaveBeenCalledTimes(1);
+            expect(mockRefundSyncUpsert).toHaveBeenCalledTimes(1);
         });
 
         it.each(['PAID', 'REFUNDED'])('should ignore success when payment became %s while waiting for the lock', async (status) => {
@@ -537,13 +540,11 @@ describe('PaymentsService', () => {
                 data: { object: { id: 'pi_block', amount: 35000 } },
             } as Stripe.Event);
 
-            expect(result).toMatchObject({ refunded: true });
-            expect(mockStripeRefundsCreate).toHaveBeenCalledWith(
-                { payment_intent: 'pi_block' },
-                { idempotencyKey: 'reservation-conflict-refund-pi_block' },
-            );
+            expect(result).toMatchObject({ refundRequested: true });
+            expect(mockRefundSyncUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: { paymentId: 'payment-block', automatic: true } }));
+            expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
             expect(mockTxPaymentUpdate).toHaveBeenCalledWith({
-                where: { id: 'payment-block' }, data: { status: 'REFUNDED' },
+                where: { id: 'payment-block' }, data: { status: 'PAID' },
             });
             expect(mockTxReservationUpdate).toHaveBeenCalledWith({
                 where: { id: 'reservation-block' }, data: { status: 'EXPIRED' },
@@ -762,17 +763,8 @@ describe('PaymentsService', () => {
             const result =
                 await service.handleStripeWebhook(event);
 
-            expect(
-                mockStripeRefundsCreate,
-            ).toHaveBeenCalledWith(
-                {
-                    payment_intent: 'pi_expired',
-                },
-                {
-                    idempotencyKey:
-                        'expired-reservation-refund-pi_expired',
-                },
-            );
+            expect(mockRefundSyncUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: { paymentId: 'payment-123', automatic: true } }));
+            expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
 
             expect(
                 mockTxPaymentUpdate,
@@ -781,7 +773,7 @@ describe('PaymentsService', () => {
                     id: 'payment-123',
                 },
                 data: {
-                    status: 'REFUNDED',
+                    status: 'PAID',
                 },
             });
 
@@ -799,7 +791,7 @@ describe('PaymentsService', () => {
             expect(result).toEqual({
                 duplicate: false,
                 processed: true,
-                refunded: true,
+                refundRequested: true,
             });
         });
 
@@ -857,17 +849,8 @@ describe('PaymentsService', () => {
             const result =
                 await service.handleStripeWebhook(event);
 
-            expect(
-                mockStripeRefundsCreate,
-            ).toHaveBeenCalledWith(
-                {
-                    payment_intent: 'pi_conflict',
-                },
-                {
-                    idempotencyKey:
-                        'reservation-conflict-refund-pi_conflict',
-                },
-            );
+            expect(mockRefundSyncUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: { paymentId: 'payment-123', automatic: true } }));
+            expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
 
             expect(
                 mockTxPaymentUpdate,
@@ -876,14 +859,14 @@ describe('PaymentsService', () => {
                     id: 'payment-123',
                 },
                 data: {
-                    status: 'REFUNDED',
+                    status: 'PAID',
                 },
             });
 
             expect(result).toEqual({
                 duplicate: false,
                 processed: true,
-                refunded: true,
+                refundRequested: true,
             });
         });
 
@@ -936,7 +919,7 @@ describe('PaymentsService', () => {
                 await service.handleStripeWebhook(event);
 
             expect(
-                mockStripeRefundsCreate,
+                mockRefundSyncUpsert,
             ).toHaveBeenCalled();
 
             expect(
@@ -946,7 +929,7 @@ describe('PaymentsService', () => {
             expect(result).toEqual({
                 duplicate: false,
                 processed: true,
-                refunded: true,
+                refundRequested: true,
             });
         });
 

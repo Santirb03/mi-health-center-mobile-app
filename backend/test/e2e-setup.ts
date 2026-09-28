@@ -34,10 +34,12 @@ jest.mock('stripe', () => {
         if (!intents.has(id)) throw new Error('Unknown mocked intent');
         return intents.get(id);
       });
-      this.refunds.create = jest.fn(async () => ({
-        id: `re_${randomUUID()}`,
-        status: 'succeeded',
-      }));
+      const refunds: any[] = [];
+      this.refunds.list = jest.fn(async (params: any) => ({ data: refunds.filter(r => r.payment_intent === params.payment_intent), has_more: false }));
+      this.refunds.create = jest.fn(async (params: any) => {
+        const refund = { ...params, id: `re_${randomUUID()}`, status: 'succeeded', currency: 'mxn', created: Math.floor(Date.now() / 1000) };
+        refunds.push(refund); return refund;
+      });
       // Fail closed if new code tries any unmocked Stripe API operation.
       this._requestSender._request = () => {
         throw new Error('Stripe network calls are forbidden in E2E');
