@@ -1,4 +1,5 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
+import { syncReminders } from '../../services/reminders';
 import { Text, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { Action, LoadState, Page, styles } from "../../components/booking-ui";
@@ -22,6 +23,9 @@ export default function ReservationDetail() {
   const resource = useResource(read);
   const now = useNow();
   const reservation = resource.data;
+  useEffect(() => {
+    if (reservation) void syncReminders().catch(() => {});
+  }, [reservation?.id, reservation?.status, reservation?.startTime]);
   const seconds = reservation?.expiresAt
     ? Math.max(0, Math.ceil((Date.parse(reservation.expiresAt) - now) / 1000))
     : 0;

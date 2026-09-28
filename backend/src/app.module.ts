@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from './notifications/notifications.controller';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -25,6 +26,7 @@ import { HttpObservabilityModule } from './observability/http-observability.modu
     ReservationsModule,
     PatientsModule,
     PaymentsModule,
+    NotificationsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],

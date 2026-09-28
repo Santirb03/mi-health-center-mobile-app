@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { NotificationNavigation } from './notification-navigation';
 import { Text, View } from "react-native";
 import { useResource } from "../hooks/use-resource";
 import { getCurrentUser } from "../services/admin-agenda";
@@ -8,6 +9,7 @@ export function ReservationNavigation() {
   const user = useResource(getCurrentUser);
   return (
     <View style={{ paddingHorizontal: 24, paddingBottom: 16, gap: 8 }}>
+      <NotificationNavigation />
       <LoadState {...user} />
       {user.data?.role === "ADMIN" && (
         <>

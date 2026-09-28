@@ -14,6 +14,7 @@ import { api, session } from "../services/api";
 import { login, LoginData, logout } from "../services/auth";
 import { getErrorMessage } from "../services/errors";
 import { SessionExpiredError } from "../services/session";
+import { clearReminders, syncReminders } from '../services/reminders';
 
 interface SessionContextValue {
   authenticated: boolean;
@@ -35,6 +36,20 @@ export function SessionProvider({ children }: PropsWithChildren) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const restoring = useRef(false);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (AppState.currentState === 'active' && session.getTokens()) void syncReminders().catch(() => {});
+    };
+    const unsubscribe = session.subscribe(() => {
+      if (!session.getTokens()) void clearReminders().catch(() => {});
+      else refresh();
+    });
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') refresh(); });
+    const timer = setInterval(refresh, 60000);
+    refresh();
+    return () => { unsubscribe(); subscription.remove(); clearInterval(timer); };
+  }, []);
 
   const retry = useCallback(async () => {
     if (restoring.current) return;
@@ -80,7 +95,8 @@ export function SessionProvider({ children }: PropsWithChildren) {
     setError(null);
     setLoading(true);
     try {
-      await logout();
+      try { await clearReminders(); }
+      finally { await logout(); }
     } finally {
       setLoading(false);
     }

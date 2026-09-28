@@ -42,6 +42,7 @@ model User {
   updatedAt        DateTime @updatedAt
 
   doctorProfile DoctorProfile?
+  notifications Notification[]
 
   @@map("users")
 }
@@ -180,4 +181,20 @@ model StripeWebhookEvent {
   type        String
   processedAt DateTime @default(now())
   createdAt   DateTime @default(now())
+}
+
+model Notification {
+  id String @id @default(uuid())
+  userId String
+  reservationId String
+  eventKey String @unique
+  title String
+  body String
+  createdAt DateTime @default(now())
+  readAt DateTime?
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt, id])
+  @@index([userId, readAt])
+  @@map("notifications")
 }
