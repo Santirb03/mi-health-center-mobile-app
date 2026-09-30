@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { randomUUID } from 'node:crypto';
 import {
   INestApplication,
   ValidationPipe,
@@ -142,6 +143,26 @@ describe('Backend E2E', () => {
     expect(response.body.doctorProfile).toBeDefined();
     expect(response.body.doctorProfile.firstName).toBe('E2E');
     expect(response.body.doctorProfile.lastName).toBe('Doctor');
+  });
+
+  it('returns 201 and 409 for concurrent registrations with the same email', async () => {
+    const concurrentEmail = `concurrent-register-${randomUUID()}@test.com`;
+    const payload = {
+      email: concurrentEmail, password,
+      firstName: 'Concurrent', lastName: 'Doctor',
+    };
+    try {
+      const [first, second] = await Promise.all([
+        request(app.getHttpServer()).post('/auth/register').send(payload),
+        request(app.getHttpServer()).post('/auth/register').send(payload),
+      ]);
+      expect([first.status, second.status].sort()).toEqual([201, 409]);
+      const conflict = [first, second].find(response => response.status === 409)!;
+      expect(conflict.body.message).toBe('Email already registered');
+      expect(await prisma.user.count({ where: { email: concurrentEmail } })).toBe(1);
+    } finally {
+      await prisma.user.deleteMany({ where: { email: concurrentEmail } });
+    }
   });
 
   it('should login and return access and refresh tokens', async () => {

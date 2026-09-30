@@ -48,6 +48,29 @@ describe('AuthService', () => {
   });
 
   describe('register', () => {
+    it('converts a P2002 create error into an email conflict', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.user.create.mockRejectedValueOnce(
+        Object.assign(new Error('Unique constraint failed'), { code: 'P2002' }),
+      );
+      const result = service.register({
+        email: 'concurrent@test.com', password: 'Password123!',
+        firstName: 'Concurrent', lastName: 'Doctor',
+      });
+      await expect(result).rejects.toBeInstanceOf(ConflictException);
+      await expect(result).rejects.toHaveProperty('message', 'Email already registered');
+    });
+
+    it('rethrows a non-P2002 create error unchanged', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      const dbError = new Error('db down');
+      mockPrisma.user.create.mockRejectedValueOnce(dbError);
+      await expect(service.register({
+        email: 'concurrent@test.com', password: 'Password123!',
+        firstName: 'Concurrent', lastName: 'Doctor',
+      })).rejects.toBe(dbError);
+    });
+
     it('should register a new user and create a doctor profile', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
 

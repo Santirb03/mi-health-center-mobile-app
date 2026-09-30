@@ -39,23 +39,31 @@ export class AuthService {
 
         const passwordHash = await argon2.hash(dto.password);
 
-        const user = await this.prisma.user.create({
-            data: {
-                email: dto.email,
-                passwordHash,
-                doctorProfile: {
-                    create: {
-                        firstName: dto.firstName,
-                        lastName: dto.lastName,
-                        phone: dto.phone,
-                        specialty: dto.specialty,
+        let user;
+        try {
+            user = await this.prisma.user.create({
+                data: {
+                    email: dto.email,
+                    passwordHash,
+                    doctorProfile: {
+                        create: {
+                            firstName: dto.firstName,
+                            lastName: dto.lastName,
+                            phone: dto.phone,
+                            specialty: dto.specialty,
+                        },
                     },
                 },
-            },
-            include: {
-                doctorProfile: true,
-            },
-        });
+                include: {
+                    doctorProfile: true,
+                },
+            });
+        } catch (error) {
+            if (error instanceof Error && 'code' in error && error.code === 'P2002') {
+                throw new ConflictException('Email already registered');
+            }
+            throw error;
+        }
 
         return {
             id: user.id,
