@@ -86,6 +86,10 @@ async function main() {
     email: 'backup-doctor@example.invalid', passwordHash: 'synthetic-not-a-login-hash',
     doctorProfile: { create: { firstName: 'Doctora', lastName: 'Prueba Álvarez' } },
   }, include: { doctorProfile: true } });
+  await prisma.passwordResetToken.create({ data: {
+    userId: user.id, tokenHash: 'a'.repeat(64),
+    expiresAt: new Date('2035-01-01T00:30:00.000Z'), usedAt: null,
+  } });
   await prisma.user.create({ data: {
     email: 'backup-admin@example.invalid', passwordHash: 'synthetic-not-a-login-hash', role: 'ADMIN',
   } });
