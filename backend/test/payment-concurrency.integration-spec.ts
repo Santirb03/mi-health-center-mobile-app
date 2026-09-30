@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -111,6 +112,36 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
   }
 
   type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
+
+  it('rejects cancellation of a started CONFIRMED reservation without a cancellation notification', async () => {
+    const f = await fixture(false);
+    const now = Date.now();
+    await prisma.reservation.update({ where: { id: f.reservation.id }, data: {
+      status: 'CONFIRMED', startTime: new Date(now - 3600000), endTime: new Date(now + 3600000),
+    } });
+
+    const result = reservations.cancel(f.user.id, f.reservation.id);
+    await expect(result).rejects.toBeInstanceOf(BadRequestException);
+    await expect(result).rejects.toHaveProperty(
+      'message', 'Reservations that have already started cannot be cancelled',
+    );
+    expect(await prisma.reservation.findUniqueOrThrow({ where: { id: f.reservation.id } }))
+      .toHaveProperty('status', 'CONFIRMED');
+    expect(await prisma.notification.count({ where: { eventKey: `${f.reservation.id}:CANCELLED` } })).toBe(0);
+  });
+
+  it('cancels a future CONFIRMED reservation and creates its cancellation notification', async () => {
+    const f = await fixture(false);
+    const now = Date.now();
+    await prisma.reservation.update({ where: { id: f.reservation.id }, data: {
+      status: 'CONFIRMED', startTime: new Date(now + 7200000), endTime: new Date(now + 10800000),
+    } });
+
+    await reservations.cancel(f.user.id, f.reservation.id);
+    expect(await prisma.reservation.findUniqueOrThrow({ where: { id: f.reservation.id } }))
+      .toHaveProperty('status', 'CANCELLED');
+    expect(await prisma.notification.count({ where: { eventKey: `${f.reservation.id}:CANCELLED` } })).toBe(1);
+  });
 
   it('processes a newer automatic job ahead of more than ten older passive jobs', async () => {
     const passiveIds: string[] = [];

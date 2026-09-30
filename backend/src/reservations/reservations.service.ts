@@ -478,6 +478,16 @@ export class ReservationsService {
                 throw new BadRequestException('Completed reservations cannot be cancelled');
             }
 
+            const lockedNow = new Date();
+            if (
+                reservation.status === 'CONFIRMED' &&
+                reservation.startTime <= lockedNow
+            ) {
+                throw new BadRequestException(
+                    'Reservations that have already started cannot be cancelled',
+                );
+            }
+
             return tx.reservation.update({
                 where: { id: reservation.id },
                 data: { status: 'CANCELLED' },

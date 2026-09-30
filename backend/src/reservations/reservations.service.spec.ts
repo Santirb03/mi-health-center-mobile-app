@@ -788,6 +788,42 @@ describe('ReservationsService', () => {
   });
 
   describe('cancel', () => {
+    it.each([
+      ['already started', -1000, 3600000],
+      ['already ended', -7200000, -3600000],
+      ['starting exactly now', 0, 3600000],
+    ])('rejects CONFIRMED reservations %s', async (_label, startOffset, endOffset) => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({ id: 'doctor-123' });
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'reservation-123', roomId: 'room-123', status: 'CONFIRMED',
+        startTime: new Date(Date.now() + Number(startOffset)),
+        endTime: new Date(Date.now() + Number(endOffset)),
+      });
+
+      const result = service.cancel('user-123', 'reservation-123');
+      await expect(result).rejects.toBeInstanceOf(BadRequestException);
+      await expect(result).rejects.toHaveProperty(
+        'message', 'Reservations that have already started cannot be cancelled',
+      );
+      expect(mockPrismaService.reservation.update).not.toHaveBeenCalled();
+    });
+
+    it('cancels a future CONFIRMED reservation', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({ id: 'doctor-123' });
+      mockPrismaService.reservation.findFirst.mockResolvedValue({
+        id: 'reservation-123', roomId: 'room-123', status: 'CONFIRMED',
+        startTime: new Date(Date.now() + 7200000),
+        endTime: new Date(Date.now() + 10800000),
+      });
+      const cancelled = { id: 'reservation-123', status: 'CANCELLED' };
+      mockPrismaService.reservation.update.mockResolvedValue(cancelled);
+
+      await expect(service.cancel('user-123', 'reservation-123')).resolves.toEqual(cancelled);
+      expect(mockPrismaService.reservation.update).toHaveBeenCalledWith({
+        where: { id: 'reservation-123' }, data: { status: 'CANCELLED' },
+      });
+    });
+
     it('should reject cancellation when the reservation expires while waiting for the room lock', async () => {
       mockPrismaService.doctorProfile.findUnique.mockResolvedValue({ id: 'doctor-123' });
       mockPrismaService.reservation.findFirst
