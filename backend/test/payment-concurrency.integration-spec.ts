@@ -112,6 +112,53 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
 
   type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
 
+  it('processes a newer automatic job ahead of more than ten older passive jobs', async () => {
+    const passiveIds: string[] = [];
+    for (let index = 0; index < 11; index++) {
+      const f = await fixture(false);
+      const job = await prisma.refundSync.create({ data: {
+        paymentId: f.payment.id, automatic: false, nextAttemptAt: new Date(Date.now() - 3600000),
+      } });
+      passiveIds.push(job.id);
+    }
+    const automatic = await fixture(false);
+    await prisma.payment.update({ where: { id: automatic.payment.id }, data: { status: 'PAID' } });
+    const job = await prisma.refundSync.create({ data: {
+      paymentId: automatic.payment.id, automatic: true, nextAttemptAt: new Date(Date.now() - 1000),
+    } });
+    await payments.processDueRefunds();
+    const processed = await prisma.refundSync.findUniqueOrThrow({ where: { id: job.id } });
+    expect(processed.lastCheckedAt).not.toBeNull();
+    expect(processed.leaseToken).toBeNull();
+    expect(await prisma.refund.count({ where: { paymentId: automatic.payment.id } })).toBe(1);
+    expect(await prisma.refundSync.count({ where: { id: { in: passiveIds }, lastCheckedAt: { not: null } } })).toBe(9);
+  });
+
+  it.each([
+    ['idle payment', null, false, 86_400_000],
+    ['pending refund', 'pending', false, 60_000],
+    ['terminal failed refund', 'failed', true, 86_400_000],
+  ] as const)('schedules %s with the expected reconciliation delay', async (_label, status, needsReview, delay) => {
+    const f = await fixture(false);
+    await prisma.payment.update({ where: { id: f.payment.id }, data: { status: 'PAID' } });
+    const job = await prisma.refundSync.create({ data: { paymentId: f.payment.id, automatic: false } });
+    if (status) storedRefunds.push({
+      id: `re_${randomUUID()}`, payment_intent: f.payment.transactionId,
+      amount: 35000, currency: 'mxn', status, created: Math.floor(Date.now() / 1000),
+    });
+    const before = Date.now();
+    await payments.reconcileRefundsForIntent(f.payment.transactionId!);
+    const after = Date.now();
+    const updated = await prisma.refundSync.findUniqueOrThrow({ where: { id: job.id } });
+    expect(updated.nextAttemptAt.getTime()).toBeGreaterThanOrEqual(before + delay);
+    expect(updated.nextAttemptAt.getTime()).toBeLessThanOrEqual(after + delay);
+    expect(updated.needsReview).toBe(needsReview);
+    expect(updated.lastError).toBe(needsReview ? 'refund_needs_attention' : null);
+    expect(updated.lastCheckedAt).not.toBeNull();
+    expect(await prisma.refundSync.count({ where: { id: job.id, nextAttemptAt: { lte: new Date() } } })).toBe(0);
+    expect(refund).not.toHaveBeenCalled();
+  });
+
   // Hold the actual DB lock until every competing operation is visibly waiting.
   // This forces overlap without guessing timing using a fixed sleep.
   async function queued(

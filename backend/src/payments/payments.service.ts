@@ -106,7 +106,7 @@ export class PaymentsService {
     async processDueRefunds() {
         const jobs = await this.prisma.refundSync.findMany({
             where: { nextAttemptAt: { lte: new Date() }, OR: [{ leaseUntil: null }, { leaseUntil: { lt: new Date() } }] },
-            orderBy: { nextAttemptAt: 'asc' }, take: 10,
+            orderBy: [{ automatic: 'desc' }, { nextAttemptAt: 'asc' }], take: 10,
         });
         for (const job of jobs) {
             try { await new RefundReconciler(this.prisma, this.stripe).run(job.id); }

@@ -4,6 +4,23 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 const options = { timeout: 5000, maxNetworkRetries: 0 };
+const OUTSTANDING_RECHECK_MS = 60_000;
+const AUTOMATIC_RECHECK_MS = 900_000;
+const IDLE_RECHECK_MS = 86_400_000;
+
+export function nextRefundDelayMs(input: {
+  versionChanged: boolean;
+  outstanding: boolean;
+  review: boolean;
+  automatic: boolean;
+  fullyRefunded: boolean;
+}): number {
+  if (input.versionChanged) return 0;
+  if (input.outstanding) return OUTSTANDING_RECHECK_MS;
+  if (input.automatic && !input.fullyRefunded && !input.review) return AUTOMATIC_RECHECK_MS;
+  return IDLE_RECHECK_MS;
+}
+
 const refundStates = new Set(['pending', 'requires_action', 'succeeded', 'failed', 'canceled']);
 export const refundSummarySelection = {
   status: true,
@@ -105,7 +122,10 @@ export class RefundReconciler {
         // during I/O; the next worker immediately refreshes it again.
         await tx.refundSync.update({ where: { id }, data: {
           leaseToken: null, leaseUntil: null, lastCheckedAt: new Date(), needsReview: review, lastError: reason,
-          nextAttemptAt: new Date(Date.now() + (fresh.version !== job.version ? 0 : outstanding ? 60000 : 900000)),
+          nextAttemptAt: new Date(Date.now() + nextRefundDelayMs({
+            versionChanged: fresh.version !== job.version,
+            outstanding, review, automatic: job.automatic, fullyRefunded: succeeded >= total,
+          })),
         } });
         // A refund event can arrive before payment_intent.succeeded. Keep the
         // pending payment eligible for its confirmation webhook; refund details
