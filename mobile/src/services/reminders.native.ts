@@ -1,7 +1,8 @@
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { getReservations } from './reservations';
+import { getReservationPage } from './reservations';
+import { collectConfirmed } from './upcoming-reservations';
 import { getCurrentUser } from './admin-agenda';
 import { session } from './api';
 import { reminderPlan } from './reminder-plan';
@@ -67,7 +68,8 @@ export function syncReminders() {
     if (!session.getTokens()) return clear();
     const user = await getCurrentUser();
     if (user.role !== 'DOCTOR' || await SecureStore.getItemAsync(`reminders-${user.id}`) !== 'on') return clear();
-    const items = await getReservations();
+    const controller = new AbortController();
+    const items = await collectConfirmed((cursor) => getReservationPage('confirmed', cursor, controller.signal));
     if (version !== session.getVersion() || !session.getTokens()) return clear();
     const desired = reminderPlan(items);
     const existing = await Notifications.getAllScheduledNotificationsAsync();
