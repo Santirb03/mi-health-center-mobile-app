@@ -1,10 +1,13 @@
 import {
+  BadRequestException,
   ConflictException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+import { createHash } from 'node:crypto';
+import { PASSWORD_RESET_DELIVERY } from './password-reset-delivery';
 
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -13,6 +16,10 @@ describe('AuthService', () => {
   let service: AuthService;
 
   const mockPrisma = {
+    passwordResetToken: {
+      findUnique: jest.fn(), upsert: jest.fn(), updateMany: jest.fn(),
+    },
+    $transaction: jest.fn(),
     user: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -25,14 +32,21 @@ describe('AuthService', () => {
     signAsync: jest.fn(),
     verifyAsync: jest.fn(),
   };
+  const delivery = { sendPasswordReset: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.passwordResetToken.findUnique.mockReset();
+    mockPrisma.passwordResetToken.upsert.mockReset();
+    mockPrisma.passwordResetToken.updateMany.mockReset().mockResolvedValue({ count: 1 });
+    mockPrisma.$transaction.mockImplementation(async (callback) => callback(mockPrisma));
+    delivery.sendPasswordReset.mockReset().mockResolvedValue(undefined);
     mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
+        { provide: PASSWORD_RESET_DELIVERY, useValue: delivery },
         {
           provide: PrismaService,
           useValue: mockPrisma,
@@ -45,6 +59,110 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
+  });
+
+  describe('password reset', () => {
+    const publicResponse = {
+      message: 'If an account exists for that email, password reset instructions will be sent',
+    };
+    const rawToken = 'unit-test-reset-token';
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const now = new Date('2026-09-30T18:00:00Z');
+    const validToken = () => ({
+      id: 'reset-123', userId: 'user-123', tokenHash,
+      expiresAt: new Date(now.getTime() + 1800000), usedAt: null,
+    });
+    beforeEach(() => {
+      jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate'] });
+      jest.setSystemTime(now);
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'user-123' });
+      mockPrisma.user.update.mockResolvedValue({ id: 'user-123' });
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(validToken());
+    });
+    afterEach(() => jest.useRealTimers());
+
+    it('stores only SHA-256 and delivers a random token with a 30 minute expiry', async () => {
+      expect(await service.forgotPassword('Doctor@Test.com')).toEqual(publicResponse);
+      expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({ where: { email: 'Doctor@Test.com' } });
+      expect(delivery.sendPasswordReset).toHaveBeenCalledTimes(1);
+      const sent = delivery.sendPasswordReset.mock.calls[0][0];
+      expect(sent.email).toBe('Doctor@Test.com');
+      expect(Buffer.from(sent.token, 'base64url')).toHaveLength(32);
+      expect(sent.expiresAt).toEqual(new Date(now.getTime() + 1800000));
+      const hash = createHash('sha256').update(sent.token).digest('hex');
+      expect(hash).not.toBe(sent.token);
+      expect(mockPrisma.passwordResetToken.upsert).toHaveBeenCalledWith({
+        where: { userId: 'user-123' },
+        create: { userId: 'user-123', tokenHash: hash, expiresAt: sent.expiresAt, usedAt: null },
+        update: { tokenHash: hash, expiresAt: sent.expiresAt, usedAt: null },
+      });
+    });
+
+    it('returns the same response for an unknown email without storing or delivering', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      expect(await service.forgotPassword('missing@test.com')).toEqual(publicResponse);
+      expect(mockPrisma.passwordResetToken.upsert).not.toHaveBeenCalled();
+      expect(delivery.sendPasswordReset).not.toHaveBeenCalled();
+    });
+
+    it('replaces the previous hash, expiry and usedAt on another request', async () => {
+      await service.forgotPassword('doctor@test.com');
+      jest.setSystemTime(new Date(now.getTime() + 1000));
+      await service.forgotPassword('doctor@test.com');
+      const [first, second] = mockPrisma.passwordResetToken.upsert.mock.calls.map(call => call[0]);
+      expect(second.where).toEqual(first.where);
+      expect(second.update.tokenHash).not.toBe(first.update.tokenHash);
+      expect(second.update.expiresAt).toEqual(new Date(now.getTime() + 1801000));
+      expect(second.update.usedAt).toBeNull();
+    });
+
+    it('claims a valid token and stores an Argon2 password while invalidating refresh', async () => {
+      expect(await service.resetPassword(rawToken, 'NewPassword123!')).toEqual({ message: 'Password reset successfully' });
+      expect(mockPrisma.passwordResetToken.findUnique).toHaveBeenCalledWith({ where: { tokenHash } });
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(mockPrisma.passwordResetToken.updateMany).toHaveBeenCalledWith({
+        where: { id: 'reset-123', tokenHash, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      const update = mockPrisma.user.update.mock.calls[0][0];
+      expect(update.where).toEqual({ id: 'user-123' });
+      expect(update.data.refreshTokenHash).toBeNull();
+      expect(update.data.passwordHash).not.toBe('NewPassword123!');
+      expect(await argon2.verify(update.data.passwordHash, 'NewPassword123!')).toBe(true);
+    });
+
+    it.each(['missing', 'expired', 'expires exactly now', 'used', 'claim lost'])(
+      'rejects %s with the same error and no user update', async (scenario) => {
+        const reset = validToken();
+        mockPrisma.passwordResetToken.findUnique.mockResolvedValue(
+          scenario === 'missing' ? null : {
+            ...reset,
+            expiresAt: scenario === 'expired' ? new Date(now.getTime() - 1)
+              : scenario === 'expires exactly now' ? now : reset.expiresAt,
+            usedAt: scenario === 'used' ? now : null,
+          },
+        );
+        if (scenario === 'claim lost') mockPrisma.passwordResetToken.updateMany.mockResolvedValue({ count: 0 });
+        const result = service.resetPassword(rawToken, 'NewPassword123!');
+        await expect(result).rejects.toBeInstanceOf(BadRequestException);
+        await expect(result).rejects.toHaveProperty('message', 'Invalid or expired reset token');
+        expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      },
+    );
+
+    it('propagates delivery failures after persisting the token', async () => {
+      const error = new Error('delivery unavailable');
+      delivery.sendPasswordReset.mockRejectedValue(error);
+      await expect(service.forgotPassword('doctor@test.com')).rejects.toBe(error);
+      expect(mockPrisma.passwordResetToken.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it('propagates database failures unchanged', async () => {
+      const error = new Error('database unavailable');
+      mockPrisma.passwordResetToken.updateMany.mockRejectedValue(error);
+      await expect(service.resetPassword(rawToken, 'NewPassword123!')).rejects.toBe(error);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('register', () => {

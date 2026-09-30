@@ -11,6 +11,8 @@ describe('AuthController', () => {
   let controller: AuthController;
 
   const mockAuthService = {
+    forgotPassword: jest.fn(),
+    resetPassword: jest.fn(),
     register: jest.fn(),
     login: jest.fn(),
     refresh: jest.fn(),
@@ -36,6 +38,20 @@ describe('AuthController', () => {
       module.get<AuthController>(
         AuthController,
       );
+  });
+
+  it('delegates forgotPassword with the exact email', async () => {
+    const response = { message: 'sent' };
+    mockAuthService.forgotPassword.mockResolvedValue(response);
+    expect(await controller.forgotPassword({ email: 'Doctor@Test.com' })).toBe(response);
+    expect(mockAuthService.forgotPassword).toHaveBeenCalledWith('Doctor@Test.com');
+  });
+
+  it('delegates resetPassword with token and password', async () => {
+    const response = { message: 'reset' };
+    mockAuthService.resetPassword.mockResolvedValue(response);
+    expect(await controller.resetPassword({ token: 'token', password: 'NewPassword123!' })).toBe(response);
+    expect(mockAuthService.resetPassword).toHaveBeenCalledWith('token', 'NewPassword123!');
   });
 
   // =========================

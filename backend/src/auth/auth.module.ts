@@ -12,6 +12,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { AuthController } from './auth.controller';
 
 import { AuthService } from './auth.service';
+import { PASSWORD_RESET_DELIVERY, NoopPasswordResetDelivery } from './password-reset-delivery';
 import { AuthRateLimitModule } from './auth-rate-limit.module';
 
 @Module({
@@ -44,6 +45,7 @@ import { AuthRateLimitModule } from './auth-rate-limit.module';
   ],
 
   providers: [
+    { provide: PASSWORD_RESET_DELIVERY, useClass: NoopPasswordResetDelivery },
     AuthService,
     JwtStrategy,
   ],

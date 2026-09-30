@@ -1,5 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { randomUUID } from 'node:crypto';
+import * as argon2 from 'argon2';
+import { PASSWORD_RESET_DELIVERY } from '../src/auth/password-reset-delivery';
+import type { PasswordResetDelivery } from '../src/auth/password-reset-delivery';
 import {
   INestApplication,
   ValidationPipe,
@@ -11,6 +14,120 @@ import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 
 jest.setTimeout(30000);
+
+describe('Password reset E2E', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  let userId: string;
+  let email: string;
+  let sent: Array<Parameters<PasswordResetDelivery['sendPasswordReset']>[0]>;
+  const oldPassword = 'OriginalPassword123!';
+  const newPassword = 'ReplacementPassword123!';
+  const genericError = 'Invalid or expired reset token';
+
+  beforeEach(async () => {
+    // Fresh application also isolates the real per-endpoint rate limits.
+    sent = [];
+    userId = '';
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(PASSWORD_RESET_DELIVERY)
+      .useValue({ sendPasswordReset: async (input: typeof sent[number]) => { sent.push(input); } })
+      .compile();
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.init();
+    prisma = app.get(PrismaService);
+    email = `password-reset-${randomUUID()}@test.com`;
+    const user = await prisma.user.create({ data: { email, passwordHash: await argon2.hash(oldPassword) } });
+    userId = user.id;
+  });
+
+  afterEach(async () => {
+    try {
+      if (userId) await prisma.user.deleteMany({ where: { id: userId } });
+    } finally {
+      await app?.close();
+      sent = [];
+    }
+  });
+
+  const forgot = () => request(app.getHttpServer()).post('/auth/forgot-password').send({ email }).expect(201);
+  const reset = (token: string, password = newPassword) =>
+    request(app.getHttpServer()).post('/auth/reset-password').send({ token, password });
+  const login = (password: string) => request(app.getHttpServer()).post('/auth/login').send({ email, password });
+
+  it('returns the same public response for known and unknown emails', async () => {
+    const known = await forgot();
+    const unknown = await request(app.getHttpServer()).post('/auth/forgot-password')
+      .send({ email: `missing-${randomUUID()}@test.com` });
+    expect(unknown.status).toBe(known.status);
+    expect(unknown.body).toEqual(known.body);
+    expect(known.body).toEqual({ message: 'If an account exists for that email, password reset instructions will be sent' });
+    expect(sent).toHaveLength(1);
+  });
+
+  it('changes the password and rejects the refresh token issued before reset', async () => {
+    const previous = await login(oldPassword).expect(201);
+    await forgot();
+    await reset(sent[0].token).expect(201, { message: 'Password reset successfully' });
+    // Check before a successful new login can rotate the refresh hash itself.
+    await request(app.getHttpServer()).post('/auth/refresh')
+      .send({ refreshToken: previous.body.refreshToken }).expect(401);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: userId } })).refreshTokenHash).toBeNull();
+    await login(oldPassword).expect(401);
+    await login(newPassword).expect(201);
+  });
+
+  it('rejects reuse of the same reset token without changing the password again', async () => {
+    await forgot();
+    await reset(sent[0].token).expect(201);
+    const second = await reset(sent[0].token, 'AnotherPassword123!').expect(400);
+    expect(second.body.message).toBe(genericError);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(await argon2.verify(user.passwordHash, newPassword)).toBe(true);
+    expect((await prisma.passwordResetToken.findUniqueOrThrow({ where: { userId } })).usedAt).not.toBeNull();
+  });
+
+  it('invalidates the old token when another reset is requested', async () => {
+    await forgot();
+    await forgot();
+    expect(sent[0].token).not.toBe(sent[1].token);
+    const old = await reset(sent[0].token).expect(400);
+    expect(old.body.message).toBe(genericError);
+    await reset(sent[1].token).expect(201);
+  });
+
+  it('rejects an expired token with the generic error', async () => {
+    await forgot();
+    await prisma.passwordResetToken.update({ where: { userId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    const response = await reset(sent[0].token).expect(400);
+    expect(response.body.message).toBe(genericError);
+  });
+
+  it('allows only one concurrent reset and stores the winning password', async () => {
+    await forgot();
+    const passwords = [newPassword, 'OtherConcurrentPassword123!'];
+    const responses = await Promise.all(passwords.map(password => reset(sent[0].token, password)));
+    expect(responses.map(response => response.status).sort()).toEqual([201, 400]);
+    const winner = responses.findIndex(response => response.status === 201);
+    expect(responses[1 - winner].body.message).toBe(genericError);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(await argon2.verify(user.passwordHash, passwords[winner])).toBe(true);
+    expect(await argon2.verify(user.passwordHash, passwords[1 - winner])).toBe(false);
+  });
+
+  it('validates DTOs and enforces the forgot-password limit', async () => {
+    await request(app.getHttpServer()).post('/auth/forgot-password').send({ email: 'invalid' }).expect(400);
+    for (let i = 0; i < 4; i++) await forgot();
+    await request(app.getHttpServer()).post('/auth/forgot-password').send({ email }).expect(429);
+    await request(app.getHttpServer()).post('/auth/reset-password').send({ token: 42, password: 'short' }).expect(400);
+  });
+
+  it('enforces the reset-password limit', async () => {
+    for (let i = 0; i < 10; i++) await reset('invalid-token').expect(400);
+    await reset('invalid-token').expect(429);
+  });
+});
 
 describe('Backend E2E', () => {
   let app: INestApplication<App>;

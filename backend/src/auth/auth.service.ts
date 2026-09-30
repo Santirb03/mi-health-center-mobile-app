@@ -1,11 +1,16 @@
 import {
+    BadRequestException,
+    Inject,
+    Optional,
     ConflictException,
     Injectable,
     UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
+import { PASSWORD_RESET_DELIVERY, NoopPasswordResetDelivery } from './password-reset-delivery';
+import type { PasswordResetDelivery } from './password-reset-delivery';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
@@ -16,6 +21,8 @@ export class AuthService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly jwtService: JwtService,
+        @Optional() @Inject(PASSWORD_RESET_DELIVERY)
+        private readonly passwordResetDelivery: PasswordResetDelivery = new NoopPasswordResetDelivery(),
     ) { }
 
     async me(userId: string) {
@@ -71,6 +78,48 @@ export class AuthService {
             role: user.role,
             doctorProfile: user.doctorProfile,
         };
+    }
+
+    async forgotPassword(email: string) {
+        const user = await this.prisma.user.findUnique({ where: { email } });
+        const rawToken = randomBytes(32).toString('base64url');
+        const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+        if (user) {
+            const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+            await this.prisma.passwordResetToken.upsert({
+                where: { userId: user.id },
+                create: { userId: user.id, tokenHash, expiresAt, usedAt: null },
+                update: { tokenHash, expiresAt, usedAt: null },
+            });
+            await this.passwordResetDelivery.sendPasswordReset({ email, token: rawToken, expiresAt });
+        }
+        return {
+            message: 'If an account exists for that email, password reset instructions will be sent',
+        };
+    }
+
+    async resetPassword(token: string, password: string) {
+        const tokenHash = createHash('sha256').update(token).digest('hex');
+        const now = new Date();
+        const reset = await this.prisma.passwordResetToken.findUnique({ where: { tokenHash } });
+        if (!reset || reset.usedAt !== null || reset.expiresAt <= now) {
+            throw new BadRequestException('Invalid or expired reset token');
+        }
+        const passwordHash = await argon2.hash(password);
+        await this.prisma.$transaction(async (tx) => {
+            const claimed = await tx.passwordResetToken.updateMany({
+                where: { id: reset.id, tokenHash, usedAt: null, expiresAt: { gt: now } },
+                data: { usedAt: now },
+            });
+            if (claimed.count !== 1) {
+                throw new BadRequestException('Invalid or expired reset token');
+            }
+            await tx.user.update({
+                where: { id: reset.userId },
+                data: { passwordHash, refreshTokenHash: null },
+            });
+        });
+        return { message: 'Password reset successfully' };
     }
 
     async login(dto: LoginDto) {

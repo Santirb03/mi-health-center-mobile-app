@@ -12,7 +12,8 @@ const manifest = {
     'GET /', 'GET /health', 'GET /health/ready', 'GET /rooms',
     'GET /rooms/:id', 'GET /rooms/:id/availability',
   ],
-  throttled: ['POST /auth/login', 'POST /auth/refresh', 'POST /auth/register'],
+  throttled: ['POST /auth/login', 'POST /auth/refresh', 'POST /auth/register',
+    'POST /auth/forgot-password', 'POST /auth/reset-password'],
   webhook: ['POST /payments/webhook'],
   jwt: [
     'GET /protected', 'GET /auth/me', 'POST /auth/logout',
@@ -111,7 +112,7 @@ describe('HTTP route authorization inventory', () => {
     }
   });
 
-  it('matches the explicit manifest of 34 routes', () => {
+  it('matches the explicit manifest of 36 routes', () => {
     const expected = Object.values(manifest).flat().sort();
     const discovered = routes.map(({ key }) => key).sort();
     const errors = [
@@ -123,7 +124,7 @@ describe('HTTP route authorization inventory', () => {
     if (errors.length) throw new Error(errors.join('\n'));
     expect(new Set(expected).size).toBe(expected.length);
     expect(new Set(discovered).size).toBe(discovered.length);
-    expect(routes).toHaveLength(34);
+    expect(routes).toHaveLength(36);
   });
 
   for (const [category, keys] of Object.entries(manifest)) {
