@@ -34,6 +34,9 @@ export function validateEnvironment(config: Record<string, unknown>) {
     try {
       const url = new URL(resetUrl);
       if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
+      if (config.NODE_ENV === 'production' && url.protocol !== 'https:') {
+        errors.push('PASSWORD_RESET_URL: HTTPS is required in production');
+      }
     } catch {
       errors.push('PASSWORD_RESET_URL: expected a valid HTTP(S) URL');
     }

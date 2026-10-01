@@ -1,6 +1,7 @@
 import {
     BadRequestException,
     Inject,
+    Logger,
     Optional,
     ConflictException,
     Injectable,
@@ -9,7 +10,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { PASSWORD_RESET_DELIVERY, NoopPasswordResetDelivery } from './password-reset-delivery';
+import { PASSWORD_RESET_DELIVERY, NoopPasswordResetDelivery, PASSWORD_RESET_TTL_MINUTES, PASSWORD_RESET_COOLDOWN_MS } from './password-reset-delivery';
 import type { PasswordResetDelivery } from './password-reset-delivery';
 
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,6 +19,7 @@ import { LoginDto } from './dto/login.dto';
 
 @Injectable()
 export class AuthService {
+    private readonly logger = new Logger(AuthService.name);
     constructor(
         private readonly prisma: PrismaService,
         private readonly jwtService: JwtService,
@@ -81,21 +83,35 @@ export class AuthService {
     }
 
     async forgotPassword(email: string) {
+        const now = Date.now();
+        const response = {
+            message: 'If an account exists for that email, password reset instructions will be sent',
+        };
         const user = await this.prisma.user.findUnique({ where: { email } });
+        if (user) {
+            const previous = await this.prisma.passwordResetToken.findUnique({ where: { userId: user.id } });
+            // Concurrent requests can both pass this check and send emails; accepted for this phase.
+            if (previous && previous.usedAt === null && previous.expiresAt.getTime() > now &&
+                now - (previous.expiresAt.getTime() - PASSWORD_RESET_TTL_MINUTES * 60_000) < PASSWORD_RESET_COOLDOWN_MS) {
+                return response;
+            }
+        }
         const rawToken = randomBytes(32).toString('base64url');
         const tokenHash = createHash('sha256').update(rawToken).digest('hex');
         if (user) {
-            const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+            const expiresAt = new Date(now + PASSWORD_RESET_TTL_MINUTES * 60_000);
             await this.prisma.passwordResetToken.upsert({
                 where: { userId: user.id },
                 create: { userId: user.id, tokenHash, expiresAt, usedAt: null },
                 update: { tokenHash, expiresAt, usedAt: null },
             });
-            await this.passwordResetDelivery.sendPasswordReset({ email, token: rawToken, expiresAt });
+            try {
+                await this.passwordResetDelivery.sendPasswordReset({ email, token: rawToken, expiresAt });
+            } catch {
+                this.logger.error({ message: 'Password reset email delivery failed', userId: user.id });
+            }
         }
-        return {
-            message: 'If an account exists for that email, password reset instructions will be sent',
-        };
+        return response;
     }
 
     async resetPassword(token: string, password: string) {

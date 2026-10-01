@@ -1,4 +1,6 @@
 export const PASSWORD_RESET_DELIVERY = Symbol('PASSWORD_RESET_DELIVERY');
+export const PASSWORD_RESET_TTL_MINUTES = 30;
+export const PASSWORD_RESET_COOLDOWN_MS = 60_000;
 
 export interface PasswordResetDelivery {
   sendPasswordReset(input: {

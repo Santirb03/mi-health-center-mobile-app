@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Logger,
   ConflictException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -82,6 +83,7 @@ describe('AuthService', () => {
     afterEach(() => jest.useRealTimers());
 
     it('stores only SHA-256 and delivers a random token with a 30 minute expiry', async () => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(null);
       expect(await service.forgotPassword('Doctor@Test.com')).toEqual(publicResponse);
       expect(mockPrisma.user.findUnique).toHaveBeenCalledWith({ where: { email: 'Doctor@Test.com' } });
       expect(delivery.sendPasswordReset).toHaveBeenCalledTimes(1);
@@ -106,13 +108,15 @@ describe('AuthService', () => {
     });
 
     it('replaces the previous hash, expiry and usedAt on another request', async () => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(null);
       await service.forgotPassword('doctor@test.com');
-      jest.setSystemTime(new Date(now.getTime() + 1000));
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(mockPrisma.passwordResetToken.upsert.mock.calls[0][0].create);
+      jest.setSystemTime(new Date(now.getTime() + 61000));
       await service.forgotPassword('doctor@test.com');
       const [first, second] = mockPrisma.passwordResetToken.upsert.mock.calls.map(call => call[0]);
       expect(second.where).toEqual(first.where);
       expect(second.update.tokenHash).not.toBe(first.update.tokenHash);
-      expect(second.update.expiresAt).toEqual(new Date(now.getTime() + 1801000));
+      expect(second.update.expiresAt).toEqual(new Date(now.getTime() + 1861000));
       expect(second.update.usedAt).toBeNull();
     });
 
@@ -150,11 +154,54 @@ describe('AuthService', () => {
       },
     );
 
-    it('propagates delivery failures after persisting the token', async () => {
+    it('hides delivery failures after persisting the token', async () => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(null);
       const error = new Error('delivery unavailable');
       delivery.sendPasswordReset.mockRejectedValue(error);
-      await expect(service.forgotPassword('doctor@test.com')).rejects.toBe(error);
+      const log = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      try {
+        expect(await service.forgotPassword('doctor@test.com')).toEqual(publicResponse);
+        expect(mockPrisma.passwordResetToken.upsert).toHaveBeenCalledTimes(1);
+        expect(delivery.sendPasswordReset).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith({ message: 'Password reset email delivery failed', userId: 'user-123' });
+        const logged = JSON.stringify(log.mock.calls);
+        for (const secret of ['doctor@test.com', delivery.sendPasswordReset.mock.calls[0][0].token, error.message]) {
+          expect(logged).not.toContain(secret);
+        }
+      } finally { log.mockRestore(); }
+    });
+
+    it.each([30000, 59999])('keeps cooldown active at %i ms without issuing or sending', async (age) => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue({ ...validToken(), expiresAt: new Date(now.getTime() + 1800000 - age) });
+      expect(await service.forgotPassword('doctor@test.com')).toEqual(publicResponse);
+      expect(mockPrisma.passwordResetToken.findUnique).toHaveBeenCalledWith({ where: { userId: 'user-123' } });
+      expect(mockPrisma.passwordResetToken.upsert).not.toHaveBeenCalled();
+      expect(delivery.sendPasswordReset).not.toHaveBeenCalled();
+    });
+
+    it.each(['exactly 60 seconds', 'used', 'expired'])('allows another request for a token %s', async (scenario) => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue({
+        ...validToken(), usedAt: scenario === 'used' ? now : null,
+        expiresAt: new Date(now.getTime() + (scenario === 'expired' ? -1 : scenario === 'exactly 60 seconds' ? 1740000 : 1800000)),
+      });
+      expect(await service.forgotPassword('doctor@test.com')).toEqual(publicResponse);
       expect(mockPrisma.passwordResetToken.upsert).toHaveBeenCalledTimes(1);
+      expect(delivery.sendPasswordReset).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the persisted token and cooldown after a delivery failure', async () => {
+      mockPrisma.passwordResetToken.findUnique.mockResolvedValue(null);
+      delivery.sendPasswordReset.mockRejectedValue(new Error('delivery unavailable'));
+      const log = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => {});
+      try {
+        expect(await service.forgotPassword('doctor@test.com')).toEqual(publicResponse);
+        mockPrisma.passwordResetToken.findUnique.mockResolvedValue(mockPrisma.passwordResetToken.upsert.mock.calls[0][0].create);
+        jest.setSystemTime(new Date(now.getTime() + 30000));
+        expect(await service.forgotPassword('doctor@test.com')).toEqual(publicResponse);
+        expect(mockPrisma.passwordResetToken.upsert).toHaveBeenCalledTimes(1);
+        expect(delivery.sendPasswordReset).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledTimes(1);
+      } finally { log.mockRestore(); }
     });
 
     it('propagates database failures unchanged', async () => {

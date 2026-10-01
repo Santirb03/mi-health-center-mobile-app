@@ -1,11 +1,12 @@
 import { Test } from '@nestjs/testing';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import { AuthModule } from './auth.module';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { PASSWORD_RESET_DELIVERY, NoopPasswordResetDelivery } from './password-reset-delivery';
-import { ResendPasswordResetDelivery } from './resend-password-reset-delivery';
+import { ResendPasswordResetDelivery, passwordResetDeliveryProvider } from './resend-password-reset-delivery';
 import { validateEnvironment } from '../config/environment';
 
 // DI selection may construct the SDK, but no test can reach its network client.
@@ -41,6 +42,38 @@ describe('Resend password reset delivery', () => {
       expect(body).not.toContain(input.email);
     }
   });
+
+  it('times out at 8 seconds and handles a late SDK rejection', async () => {
+    jest.useFakeTimers();
+    try {
+      let rejectSend!: (error: Error) => void;
+      send.mockReturnValue(new Promise((_resolve, reject) => { rejectSend = reject; }));
+      const result = adapter.sendPasswordReset(input);
+      const rejected = expect(result).rejects.toThrow('Password reset email delivery failed');
+      await jest.advanceTimersByTimeAsync(7999);
+      expect(jest.getTimerCount()).toBe(1);
+      await jest.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(jest.getTimerCount()).toBe(0);
+      rejectSend(new Error('late provider failure'));
+      await jest.advanceTimersByTimeAsync(0);
+    } finally { jest.useRealTimers(); }
+  });
+
+  it.each(['success', 'returned error', 'exception', 'synchronous exception'])(
+    'clears timers after %s', async (scenario) => {
+      jest.useFakeTimers();
+      try {
+        if (scenario === 'returned error') send.mockResolvedValue({ data: null, error: {} });
+        if (scenario === 'exception') send.mockRejectedValue(new Error('provider failure'));
+        if (scenario === 'synchronous exception') send.mockImplementation(() => { throw new Error('provider failure'); });
+        const result = adapter.sendPasswordReset(input);
+        if (scenario === 'success') await expect(result).resolves.toBeUndefined();
+        else await expect(result).rejects.toThrow('Password reset email delivery failed');
+        expect(jest.getTimerCount()).toBe(0);
+      } finally { jest.useRealTimers(); }
+    },
+  );
 
   it('preserves configured query parameters and escapes the HTML attribute', async () => {
     adapter = new ResendPasswordResetDelivery({ from, resetUrl: 'https://example.invalid/reset?lang=en&token=old' }, { emails: { send } });
@@ -85,6 +118,21 @@ describe('AuthModule password reset delivery selection', () => {
   beforeEach(() => {
     jest.mocked(Resend).mockReset().mockImplementation(() => ({ emails: { send } }) as unknown as Resend);
     send.mockReset();
+  });
+
+  it.each([
+    ['production', false, 1], ['development', false, 0], ['test', false, 0], ['production', true, 0],
+  ])('warns only for disabled production delivery (%s, %s)', async (NODE_ENV, enabled, warnings) => {
+    const warn = jest.spyOn(Logger, 'warn').mockImplementation(() => {});
+    try {
+      const delivery = await passwordResetDeliveryProvider.useFactory(new ConfigService({
+        NODE_ENV, PASSWORD_RESET_EMAIL_ENABLED: enabled, RESEND_API_KEY: 'mock-client-only',
+        PASSWORD_RESET_FROM: 'reset@example.invalid', PASSWORD_RESET_URL: 'https://example.invalid/reset',
+      }));
+      expect(delivery).toBeInstanceOf(enabled ? ResendPasswordResetDelivery : NoopPasswordResetDelivery);
+      expect(warn).toHaveBeenCalledTimes(Number(warnings));
+      if (warnings) expect(warn).toHaveBeenCalledWith('Password reset emails will not be sent: email delivery is disabled.');
+    } finally { warn.mockRestore(); }
   });
 
   it.each([undefined, 'false'])('starts without an API key and selects no-op (%s)', async (enabled) => {

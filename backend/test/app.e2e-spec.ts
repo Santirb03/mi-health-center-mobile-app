@@ -90,6 +90,9 @@ describe('Password reset E2E', () => {
 
   it('invalidates the old token when another reset is requested', async () => {
     await forgot();
+    await prisma.passwordResetToken.update({ where: { userId }, data: {
+      expiresAt: new Date(Date.now() + 30 * 60000 - 61000),
+    } });
     await forgot();
     expect(sent[0].token).not.toBe(sent[1].token);
     const old = await reset(sent[0].token).expect(400);
@@ -102,6 +105,15 @@ describe('Password reset E2E', () => {
     await prisma.passwordResetToken.update({ where: { userId }, data: { expiresAt: new Date(Date.now() - 1000) } });
     const response = await reset(sent[0].token).expect(400);
     expect(response.body.message).toBe(genericError);
+  });
+
+  it('keeps one usable token after two immediate forgot-password requests', async () => {
+    const first = await forgot();
+    const second = await forgot();
+    expect(second.status).toBe(first.status);
+    expect(second.body).toEqual(first.body);
+    expect(sent.length).toBe(1);
+    await reset(sent[0].token).expect(201, { message: 'Password reset successfully' });
   });
 
   it('allows only one concurrent reset and stores the winning password', async () => {

@@ -16,6 +16,26 @@ describe('server configuration', () => {
     expect(validateEnvironment({ ...valid, PASSWORD_RESET_EMAIL_ENABLED: enabled })
       .PASSWORD_RESET_EMAIL_ENABLED).toBe(false);
   });
+  it('requires HTTPS in production without exposing the configured URL', () => {
+    const url = 'http://private.example.invalid/reset';
+    try {
+      validateEnvironment({ ...valid, ...emailConfig, NODE_ENV: 'production', JWT_SECRET: 'x'.repeat(32), PASSWORD_RESET_URL: url });
+      throw new Error('validation did not reject');
+    } catch (error) {
+      expect((error as Error).message).toContain('PASSWORD_RESET_URL');
+      expect((error as Error).message).not.toContain(url);
+    }
+  });
+  it.each([
+    ['production', 'true', 'https://example.invalid/reset'],
+    ['development', 'true', 'http://localhost/reset'],
+    ['test', 'true', 'http://localhost/reset'],
+    ['production', 'false', 'http://localhost/reset'],
+  ])('accepts reset URL for %s with email=%s', (NODE_ENV, PASSWORD_RESET_EMAIL_ENABLED, PASSWORD_RESET_URL) => {
+    expect(() => validateEnvironment({ ...valid, ...emailConfig, JWT_SECRET: 'x'.repeat(32),
+      NODE_ENV, PASSWORD_RESET_EMAIL_ENABLED, PASSWORD_RESET_URL,
+    })).not.toThrow();
+  });
   it.each(['true', true])('parses enabled email explicitly (%s)', (enabled) => {
     expect(validateEnvironment({ ...valid, ...emailConfig, PASSWORD_RESET_EMAIL_ENABLED: enabled })
       .PASSWORD_RESET_EMAIL_ENABLED).toBe(true);
