@@ -22,6 +22,22 @@ export function validateEnvironment(config: Record<string, unknown>) {
     if (value !== value.trim()) errors.push(`${name}: surrounding whitespace`);
     return value;
   };
+  const emailEnabledValue = config.PASSWORD_RESET_EMAIL_ENABLED ?? 'false';
+  if (!['true', 'false', true, false].includes(emailEnabledValue as string | boolean)) {
+    errors.push('PASSWORD_RESET_EMAIL_ENABLED: expected true or false');
+  }
+  const emailEnabled = emailEnabledValue === 'true' || emailEnabledValue === true;
+  if (emailEnabled) {
+    required('RESEND_API_KEY');
+    required('PASSWORD_RESET_FROM');
+    const resetUrl = required('PASSWORD_RESET_URL');
+    try {
+      const url = new URL(resetUrl);
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error();
+    } catch {
+      errors.push('PASSWORD_RESET_URL: expected a valid HTTP(S) URL');
+    }
+  }
   const databaseUrl = required('DATABASE_URL');
   try {
     const url = new URL(databaseUrl);
@@ -66,5 +82,5 @@ export function validateEnvironment(config: Record<string, unknown>) {
   }
   if (errors.length)
     throw new Error(`Invalid server configuration: ${errors.join('; ')}`);
-  return { ...config, NODE_ENV: nodeEnv, PORT: Number(port) };
+  return { ...config, NODE_ENV: nodeEnv, PORT: Number(port), PASSWORD_RESET_EMAIL_ENABLED: emailEnabled };
 }

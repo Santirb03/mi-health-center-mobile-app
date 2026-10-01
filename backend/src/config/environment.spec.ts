@@ -8,6 +8,43 @@ const valid = {
 };
 
 describe('server configuration', () => {
+  const emailConfig = {
+    PASSWORD_RESET_EMAIL_ENABLED: 'true', RESEND_API_KEY: 'synthetic-test-only',
+    PASSWORD_RESET_FROM: 'Test <reset@example.invalid>', PASSWORD_RESET_URL: 'https://example.invalid/reset',
+  };
+  it.each([undefined, 'false', false])('allows disabled email without credentials (%s)', (enabled) => {
+    expect(validateEnvironment({ ...valid, PASSWORD_RESET_EMAIL_ENABLED: enabled })
+      .PASSWORD_RESET_EMAIL_ENABLED).toBe(false);
+  });
+  it.each(['true', true])('parses enabled email explicitly (%s)', (enabled) => {
+    expect(validateEnvironment({ ...valid, ...emailConfig, PASSWORD_RESET_EMAIL_ENABLED: enabled })
+      .PASSWORD_RESET_EMAIL_ENABLED).toBe(true);
+  });
+  it.each(['', 'yes', '1', 'TRUE', ' false ', 1])('rejects invalid email flag (%s)', (enabled) => {
+    expect(() => validateEnvironment({ ...valid, PASSWORD_RESET_EMAIL_ENABLED: enabled }))
+      .toThrow('PASSWORD_RESET_EMAIL_ENABLED');
+  });
+  it.each(['RESEND_API_KEY', 'PASSWORD_RESET_FROM', 'PASSWORD_RESET_URL'])(
+    'requires %s when email is enabled', (key) => {
+      expect(() => validateEnvironment({ ...valid, ...emailConfig, [key]: '' })).toThrow(key);
+    },
+  );
+  it.each(['not a URL', '/reset', 'javascript:alert(1)', 'mailto:doctor@example.invalid'])(
+    'rejects invalid reset destination (%s)', (url) => {
+      expect(() => validateEnvironment({ ...valid, ...emailConfig, PASSWORD_RESET_URL: url }))
+        .toThrow('PASSWORD_RESET_URL');
+    },
+  );
+  it('does not expose email secrets in configuration errors', () => {
+    try {
+      validateEnvironment({ ...valid, ...emailConfig, PASSWORD_RESET_URL: 'private-url-value' });
+      throw new Error('validation did not reject');
+    } catch (error) {
+      expect((error as Error).message).toContain('PASSWORD_RESET_URL');
+      expect((error as Error).message).not.toContain(emailConfig.RESEND_API_KEY);
+      expect((error as Error).message).not.toContain('private-url-value');
+    }
+  });
   it('only accepts explicit proxy IP addresses', () => {
     for (const TRUST_PROXY_IPS of [
       'true',
@@ -29,6 +66,7 @@ describe('server configuration', () => {
       ...valid,
       NODE_ENV: 'development',
       PORT: 3000,
+      PASSWORD_RESET_EMAIL_ENABLED: false,
     });
   });
   it('accepts production configuration, restricted keys and an explicit port', () => {
