@@ -20,7 +20,7 @@ const manifest = {
     'GET /notifications', 'PATCH /notifications/read-all',
     'PATCH /notifications/:id/read', 'GET /patients', 'POST /patients',
     'GET /patients/:id', 'PATCH /patients/:id', 'GET /reservations',
-    'POST /reservations', 'GET /reservations/page', 'GET /reservations/:id',
+    'POST /reservations', 'GET /reservations/page', 'GET /reservations/calendar', 'GET /reservations/:id',
     'PATCH /reservations/:id/cancel', 'POST /payments/reservations/:reservationId',
   ],
   admin: [
@@ -112,7 +112,7 @@ describe('HTTP route authorization inventory', () => {
     }
   });
 
-  it('matches the explicit manifest of 36 routes', () => {
+  it('matches the explicit manifest of 37 routes', () => {
     const expected = Object.values(manifest).flat().sort();
     const discovered = routes.map(({ key }) => key).sort();
     const errors = [
@@ -124,7 +124,7 @@ describe('HTTP route authorization inventory', () => {
     if (errors.length) throw new Error(errors.join('\n'));
     expect(new Set(expected).size).toBe(expected.length);
     expect(new Set(discovered).size).toBe(discovered.length);
-    expect(routes).toHaveLength(36);
+    expect(routes).toHaveLength(37);
   });
 
   for (const [category, keys] of Object.entries(manifest)) {

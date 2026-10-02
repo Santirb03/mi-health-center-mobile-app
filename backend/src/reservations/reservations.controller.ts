@@ -15,6 +15,7 @@ import { ReservationsService } from './reservations.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ReservationPageDto } from './dto/reservation-page.dto';
+import { ReservationCalendarDto } from './dto/reservation-calendar.dto';
 
 interface AuthenticatedRequest extends Request {
     user: {
@@ -54,6 +55,12 @@ export class ReservationsController {
     @UseGuards(JwtAuthGuard)
     page(@Req() req: AuthenticatedRequest, @Query() query: ReservationPageDto) {
         return this.reservationsService.page(req.user.userId, query);
+    }
+
+    @Get('calendar')
+    @UseGuards(JwtAuthGuard)
+    calendar(@Req() req: AuthenticatedRequest, @Query() query: ReservationCalendarDto) {
+        return this.reservationsService.calendar(req.user.userId, query);
     }
 
     @Get(':id')

@@ -70,6 +70,86 @@ describe('ReservationsService', () => {
     jest.useRealTimers();
   });
 
+  describe('calendar', () => {
+    const userId = 'calendar-user';
+    const query = { from: '2030-10-01', to: '2030-10-01' };
+
+    beforeEach(() => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue({ id: 'calendar-doctor', userId });
+      mockPrismaService.reservation.findMany.mockResolvedValue([]);
+    });
+
+    it('rejects a missing doctor profile', async () => {
+      mockPrismaService.doctorProfile.findUnique.mockResolvedValue(null);
+      await expect(service.calendar(userId, query))
+        .rejects.toThrow(new NotFoundException('Doctor profile not found'));
+      expect(mockPrismaService.reservation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects reversed ranges', async () => {
+      await expect(service.calendar(userId, { from: '2030-10-02', to: '2030-10-01' }))
+        .rejects.toThrow(new BadRequestException('Invalid calendar range'));
+      expect(mockPrismaService.reservation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects nonexistent dates using agendaDay', async () => {
+      await expect(service.calendar(userId, { ...query, from: '2030-02-31' }))
+        .rejects.toThrow(new BadRequestException('Invalid calendar date'));
+      await expect(service.calendar(userId, { ...query, to: '2030-02-31' }))
+        .rejects.toThrow(new BadRequestException('Invalid calendar date'));
+      expect(mockPrismaService.reservation.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['2030-10-01', '2030-10-01', '2030-10-02T06:00:00Z'],
+      ['2030-10-01', '2030-10-14', '2030-10-15T06:00:00Z'],
+      ['2030-12-25', '2031-01-07', '2031-01-08T06:00:00Z'],
+    ])('accepts the inclusive range %s through %s', async (from, to, end) => {
+      expect(await service.calendar(userId, { from, to })).toEqual({ items: [], truncated: false });
+      expect(mockPrismaService.reservation.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          startTime: { lt: new Date(end) },
+          endTime: { gt: new Date(`${from}T06:00:00Z`) },
+        }),
+      }));
+    });
+
+    it('rejects fifteen inclusive business days', async () => {
+      await expect(service.calendar(userId, { from: '2030-10-01', to: '2030-10-15' }))
+        .rejects.toThrow(new BadRequestException('Calendar range too large'));
+      expect(mockPrismaService.reservation.findMany).not.toHaveBeenCalled();
+    });
+
+    it('queries the authenticated doctor, strict overlap and live holds with UTC-6 boundaries', async () => {
+      await service.calendar(userId, query);
+      expect(mockPrismaService.doctorProfile.findUnique).toHaveBeenCalledWith({ where: { userId } });
+      expect(mockPrismaService.reservation.findMany).toHaveBeenCalledWith({
+        where: {
+          doctorId: 'calendar-doctor',
+          startTime: { lt: new Date('2030-10-02T06:00:00Z') },
+          endTime: { gt: new Date('2030-10-01T06:00:00Z') },
+          OR: [
+            { status: 'CONFIRMED' },
+            { status: 'COMPLETED' },
+            { status: 'PENDING', expiresAt: { gt: NOW } },
+          ],
+        },
+        include: { room: true },
+        orderBy: [{ startTime: 'asc' }, { id: 'asc' }],
+        take: 301,
+      });
+      expect(mockPrismaService.reservation.update).not.toHaveBeenCalled();
+    });
+
+    it.each([0, 3, 300, 301])('returns at most 300 of %i rows with an explicit truncation flag', async (count) => {
+      const rows = Array.from({ length: count }, (_, index) => ({ id: `calendar-${index}` }));
+      mockPrismaService.reservation.findMany.mockResolvedValue(rows);
+      expect(await service.calendar(userId, query)).toEqual({
+        items: rows.slice(0, 300), truncated: count > 300,
+      });
+    });
+  });
+
   describe('create', () => {
     const userId = 'user-123';
 

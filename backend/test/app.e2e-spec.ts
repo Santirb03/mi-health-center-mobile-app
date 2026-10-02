@@ -12,6 +12,7 @@ import { App } from 'supertest/types';
 
 import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
+import type { Prisma } from '@prisma/client';
 
 jest.setTimeout(30000);
 
@@ -138,6 +139,160 @@ describe('Password reset E2E', () => {
   it('enforces the reset-password limit', async () => {
     for (let i = 0; i < 10; i++) await reset('invalid-token').expect(400);
     await reset('invalid-token').expect(429);
+  });
+});
+
+describe('Doctor reservation calendar E2E', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  let roomId: string;
+  let doctorId: string;
+  let accessToken: string;
+  let secondDoctorAccessToken: string;
+  const userIds: string[] = [];
+  const day = { from: '2030-10-01', to: '2030-10-01' };
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.init();
+    prisma = app.get(PrismaService);
+    const room = await prisma.room.create({ data: {
+      name: `Calendar E2E ${randomUUID()}`, pricePerHour: 500,
+    } });
+    roomId = room.id;
+    for (let index = 0; index < 2; index++) {
+      const email = `calendar-${randomUUID()}@test.com`;
+      const password = 'CalendarPassword123!';
+      const user = await prisma.user.create({ data: {
+        email, passwordHash: await argon2.hash(password), role: 'DOCTOR',
+        doctorProfile: { create: { firstName: 'Calendar', lastName: `Doctor ${index}` } },
+      }, include: { doctorProfile: true } });
+      userIds.push(user.id);
+      const login = await request(app.getHttpServer()).post('/auth/login')
+        .send({ email, password }).expect(201);
+      if (index === 0) {
+        doctorId = user.doctorProfile!.id;
+        accessToken = login.body.accessToken;
+      } else secondDoctorAccessToken = login.body.accessToken;
+    }
+  });
+
+  afterEach(async () => {
+    if (roomId) await prisma.reservation.deleteMany({ where: { roomId } });
+  });
+
+  afterAll(async () => {
+    try {
+      if (roomId) {
+        await prisma.reservation.deleteMany({ where: { roomId } });
+        await prisma.room.delete({ where: { id: roomId } });
+      }
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    } finally {
+      await app?.close();
+    }
+  });
+
+  const calendar = (query = day, bearer = accessToken) => request(app.getHttpServer())
+    .get('/reservations/calendar').query(query).auth(bearer, { type: 'bearer' });
+  const fixture = (data: Partial<Prisma.ReservationUncheckedCreateInput> = {}) =>
+    prisma.reservation.create({ data: {
+      doctorId, roomId, totalPrice: 500, status: 'CONFIRMED',
+      startTime: new Date('2030-10-01T14:00:00Z'),
+      endTime: new Date('2030-10-01T15:00:00Z'), ...data,
+    } });
+
+  it('rejects calendar requests without JWT', async () => {
+    await request(app.getHttpServer()).get('/reservations/calendar').query(day).expect(401);
+  });
+
+  it('isolates the calendar between doctors and includes the room for the owner', async () => {
+    const created = await request(app.getHttpServer()).post('/reservations')
+      .auth(accessToken, { type: 'bearer' }).send({
+        roomId, startTime: '2030-10-01T14:00:00Z', endTime: '2030-10-01T15:00:00Z',
+      }).expect(201);
+    const owner = await calendar().expect(200);
+    expect(owner.body.truncated).toBe(false);
+    expect(owner.body.items).toEqual([expect.objectContaining({
+      id: created.body.id, doctorId, status: 'PENDING', room: expect.objectContaining({ id: roomId }),
+    })]);
+    await calendar(day, secondDoctorAccessToken).expect(200, { items: [], truncated: false });
+  });
+
+  it('uses the business day for a 20:00 local reservation whose UTC date is tomorrow', async () => {
+    const created = await request(app.getHttpServer()).post('/reservations')
+      .auth(accessToken, { type: 'bearer' }).send({
+        roomId, startTime: '2030-10-02T02:00:00Z', endTime: '2030-10-02T03:00:00Z',
+      }).expect(201);
+    const localDay = await calendar().expect(200);
+    expect(localDay.body.items.map((row: { id: string }) => row.id)).toEqual([created.body.id]);
+    await calendar({ from: '2030-10-02', to: '2030-10-02' })
+      .expect(200, { items: [], truncated: false });
+  });
+
+  it('includes confirmed, completed and live pending reservations without mutating stored states', async () => {
+    const now = Date.now();
+    const confirmed = await fixture();
+    const completed = await fixture({ status: 'COMPLETED' });
+    const pending = await fixture({ status: 'PENDING', expiresAt: new Date(now + 3600000) });
+    const cancelled = await fixture({ status: 'CANCELLED' });
+    const expired = await fixture({ status: 'EXPIRED' });
+    const expiredHold = await fixture({ status: 'PENDING', expiresAt: new Date(now - 3600000) });
+    const nullHold = await fixture({ status: 'PENDING', expiresAt: null });
+    const result = await calendar().expect(200);
+    expect(result.body.items.map((row: { id: string }) => row.id))
+      .toEqual([confirmed.id, completed.id, pending.id].sort());
+    const stored = await prisma.reservation.findMany({ where: { roomId } });
+    expect(stored.map(row => ({ id: row.id, status: row.status })).sort((a, b) => a.id.localeCompare(b.id)))
+      .toEqual([confirmed, completed, pending, cancelled, expired, expiredHold, nullHold]
+        .map(row => ({ id: row.id, status: row.status })).sort((a, b) => a.id.localeCompare(b.id)));
+  });
+
+  it('includes past confirmed and completed reservations for historical dates', async () => {
+    const data = { startTime: new Date('2020-10-01T14:00:00Z'), endTime: new Date('2020-10-01T15:00:00Z') };
+    const confirmed = await fixture(data);
+    const completed = await fixture({ ...data, status: 'COMPLETED' });
+    const result = await calendar({ from: '2020-10-01', to: '2020-10-01' }).expect(200);
+    expect(result.body.items.map((row: { id: string }) => row.id)).toEqual([confirmed.id, completed.id].sort());
+  });
+
+  it.each([
+    [{ from: '2030-1-01', to: day.to }, undefined],
+    [{ from: day.from, to: 'not-a-date' }, undefined],
+    [{ from: '2030-02-31', to: '2030-03-01' }, 'Invalid calendar date'],
+    [{ from: day.from, to: '2030-02-31' }, 'Invalid calendar date'],
+    [{ from: day.from, to: '2030-10-15' }, 'Calendar range too large'],
+    [{ from: '2030-10-02', to: day.to }, 'Invalid calendar range'],
+  ])('rejects invalid HTTP calendar range %j', async (query, message) => {
+    const result = await calendar(query).expect(400);
+    if (message) expect(result.body.message).toBe(message);
+  });
+
+  it('accepts exactly fourteen inclusive dates', async () => {
+    await calendar({ from: day.from, to: '2030-10-14' }).expect(200, { items: [], truncated: false });
+  });
+
+  it('uses strict overlap, excluding reservations that only touch either boundary', async () => {
+    const overlapping = await fixture({
+      startTime: new Date('2030-10-01T05:00:00Z'), endTime: new Date('2030-10-01T07:00:00Z'),
+    });
+    await fixture({ startTime: new Date('2030-10-01T05:00:00Z'), endTime: new Date('2030-10-01T06:00:00Z') });
+    await fixture({ startTime: new Date('2030-10-02T06:00:00Z'), endTime: new Date('2030-10-02T07:00:00Z') });
+    const result = await calendar().expect(200);
+    expect(result.body.items.map((row: { id: string }) => row.id)).toEqual([overlapping.id]);
+  });
+
+  it('returns the first 300 ordered rows and reports truncation with real PostgreSQL', async () => {
+    const ids = Array.from({ length: 301 }, () => randomUUID());
+    await prisma.reservation.createMany({ data: ids.map((id) => ({
+      id, doctorId, roomId, totalPrice: 500, status: 'CONFIRMED',
+      startTime: new Date('2030-10-01T14:00:00Z'), endTime: new Date('2030-10-01T15:00:00Z'),
+    })) });
+    const result = await calendar().expect(200);
+    expect(result.body.items.map((row: { id: string }) => row.id)).toEqual(ids.sort().slice(0, 300));
+    expect(result.body.truncated).toBe(true);
   });
 });
 

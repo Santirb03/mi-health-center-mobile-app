@@ -8,6 +8,8 @@ import { PrismaService } from '../prisma/prisma.service';
 
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReservationPageDto } from './dto/reservation-page.dto';
+import { ReservationCalendarDto } from './dto/reservation-calendar.dto';
+import { agendaDay } from './admin-agenda.service';
 import { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
 import { refundSummarySelection } from '../payments/refunds';
@@ -386,6 +388,35 @@ export class ReservationsService {
             ? Buffer.from(JSON.stringify({ group: query.group, id: last.id, time: last[field]!.toISOString() })).toString('base64url')
             : null;
         return { items, nextCursor };
+    }
+
+    async calendar(userId: string, query: ReservationCalendarDto) {
+        const doctor = await this.prisma.doctorProfile.findUnique({ where: { userId } });
+        if (!doctor) throw new NotFoundException('Doctor profile not found');
+
+        const start = agendaDay(query.from).start;
+        const end = agendaDay(query.to).end;
+        const duration = end.getTime() - start.getTime();
+        if (duration <= 0) throw new BadRequestException('Invalid calendar range');
+        if (duration > 14 * 86400000) throw new BadRequestException('Calendar range too large');
+
+        const now = new Date();
+        const rows = await this.prisma.reservation.findMany({
+            where: {
+                doctorId: doctor.id,
+                startTime: { lt: end },
+                endTime: { gt: start },
+                OR: [
+                    { status: 'CONFIRMED' },
+                    { status: 'COMPLETED' },
+                    { status: 'PENDING', expiresAt: { gt: now } },
+                ],
+            },
+            include: { room: true },
+            orderBy: [{ startTime: 'asc' }, { id: 'asc' }],
+            take: 301,
+        });
+        return { items: rows.slice(0, 300), truncated: rows.length > 300 };
     }
 
     async findOne(
