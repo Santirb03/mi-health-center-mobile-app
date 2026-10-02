@@ -1,4 +1,4 @@
-import { Stack } from "expo-router";
+import { Stack, usePathname } from "expo-router";
 import { ActivityIndicator, Alert, Button, Text, View } from "react-native";
 import { SessionProvider, useSession } from "../providers/session-provider";
 import { PaymentProvider } from "../providers/payment-provider";
@@ -15,7 +15,9 @@ export default function RootLayout() {
 
 function SessionNavigator() {
   const { authenticated, loading, error, retry, signOut } = useSession();
-  if (loading || error) {
+  const pathname = usePathname();
+  const recovery = pathname === "/forgot-password" || pathname === "/reset-password";
+  if ((loading || error) && !recovery) {
     return (
       <View
         style={{
@@ -59,6 +61,8 @@ function SessionNavigator() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
+      <Stack.Screen name="forgot-password" />
+      <Stack.Screen name="reset-password" />
       <Stack.Protected guard={authenticated}>
         <Stack.Screen name="home" />
         <Stack.Screen name="notifications" options={{ headerShown: true, title: 'Notificaciones' }} />

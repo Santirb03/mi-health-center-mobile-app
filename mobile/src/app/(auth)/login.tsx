@@ -134,6 +134,14 @@ export default function LoginScreen() {
           accessibilityRole="button"
           style={{ padding: 16, alignItems: "center" }}
           disabled={loading}
+          onPress={() => router.push("/forgot-password")}
+        >
+          <Text style={{ color: "#1765ae", fontSize: 16 }}>Olvidé mi contraseña</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          accessibilityRole="button"
+          style={{ padding: 16, alignItems: "center" }}
+          disabled={loading}
           onPress={() => router.push("/(auth)/register")}
         >
           <Text style={{ color: "#1765ae", fontSize: 16 }}>Crear cuenta</Text>
