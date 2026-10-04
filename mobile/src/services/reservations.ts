@@ -21,6 +21,17 @@ export interface ReservationInput {
   endTime: string;
 }
 
+export interface CalendarResponse {
+  items: Reservation[];
+  truncated: boolean;
+}
+
+export async function getCalendar(from: string, to: string, signal: AbortSignal) {
+  return (await api.get<CalendarResponse>("/reservations/calendar", {
+    params: { from, to }, signal,
+  })).data;
+}
+
 export async function getReservations(signal?: AbortSignal) {
   return (await api.get<Reservation[]>("/reservations", { signal })).data;
 }

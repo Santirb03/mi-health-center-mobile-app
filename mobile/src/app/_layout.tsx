@@ -65,6 +65,7 @@ function SessionNavigator() {
       <Stack.Screen name="reset-password" />
       <Stack.Protected guard={authenticated}>
         <Stack.Screen name="home" />
+        <Stack.Screen name="calendar" options={{ headerShown: true, title: "Calendario" }} />
         <Stack.Screen name="notifications" options={{ headerShown: true, title: 'Notificaciones' }} />
         <Stack.Screen
           name="admin-rooms"

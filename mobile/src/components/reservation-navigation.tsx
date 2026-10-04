@@ -21,10 +21,13 @@ export function ReservationNavigation() {
         </>
       )}
       {user.data?.role === "DOCTOR" && (
+        <>
         <Action
           title="Mis reservas"
           onPress={() => router.push("/reservations")}
         />
+        <Action title="Calendario" onPress={() => router.push("/calendar")} />
+        </>
       )}
       {user.error && (
         <Text>
