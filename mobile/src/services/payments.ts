@@ -1,5 +1,6 @@
 import { api } from "./api";
 import type { PaymentIntentResponse } from "./checkout";
+import type { PaymentHistoryPage } from "./payment-history";
 
 export async function createPaymentIntent(id: string, signal: AbortSignal) {
   return (
@@ -9,4 +10,10 @@ export async function createPaymentIntent(id: string, signal: AbortSignal) {
       { signal },
     )
   ).data;
+}
+
+export async function getPaymentHistory(cursor: string | null, signal: AbortSignal) {
+  return (await api.get<PaymentHistoryPage>("/payments/history", {
+    params: cursor ? { cursor } : {}, signal,
+  })).data;
 }

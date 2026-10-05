@@ -27,6 +27,7 @@ export function ReservationNavigation() {
           onPress={() => router.push("/reservations")}
         />
         <Action title="Calendario" onPress={() => router.push("/calendar")} />
+        <Action title="Mis pagos" onPress={() => router.push("/payments")} />
         </>
       )}
       {user.error && (
