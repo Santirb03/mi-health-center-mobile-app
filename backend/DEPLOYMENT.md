@@ -22,6 +22,8 @@ Configura NODE_ENV=production, DATABASE_URL de staging, JWT_SECRET aleatorio de 
 
 Ejecuta una única fase de migración por entrega con la misma versión de código y DATABASE_URL del servidor. Antes de actualizar una base con datos, revisa el SQL y confirma un backup recuperable.
 
+La migración `20261002000000_payment_paid_at` agrega la fecha del primer cobro conocido. Para pagos históricos PAID/REFUNDED aproxima `paidAt` con `updatedAt`; no garantiza la fecha real del cobro. `paidAt` puede seguir siendo null para pagos antiguos/no conciliados que no recibieron backfill.
+
 ```sh
 npm run migrate:deploy
 npm run migrate:status

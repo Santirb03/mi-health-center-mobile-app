@@ -182,6 +182,7 @@ model Payment {
   reservationId String        @unique
   amount        Decimal       @db.Decimal(10, 2)
   status        PaymentStatus @default(PENDING)
+  paidAt        DateTime?
   provider      String?
   transactionId String?       @unique
   createdAt     DateTime      @default(now())

@@ -484,6 +484,39 @@ describe('PaymentsService', () => {
             return { payment, reservation, event };
         }
 
+        it('records paidAt from the first success and preserves it when another success arrives later', async () => {
+            const { payment, event } = prepareSuccess();
+            const current = { ...payment, paidAt: null as Date | null };
+            mockTxPaymentFindUnique.mockImplementation(async () => current);
+            mockTxPaymentUpdate.mockImplementation(async ({ data }) => Object.assign(current, data));
+            await service.handleStripeWebhook(event);
+            expect(current.paidAt).toEqual(new Date(event.created * 1000));
+            await service.handleStripeWebhook({ ...event, id: 'evt_repeated_paid_at', created: event.created + 3600 });
+            expect(current.paidAt).toEqual(new Date(event.created * 1000));
+            expect(mockTxPaymentUpdate).toHaveBeenCalledTimes(1);
+        });
+
+        it.each(['PENDING', 'CANCELLED'])('records paidAt when a %s reservation cannot be confirmed', async (status) => {
+            const { reservation, event } = prepareSuccess();
+            mockTxReservationFindUnique.mockResolvedValue({ ...reservation, status,
+                expiresAt: status === 'PENDING' ? new Date(NOW.getTime() - 60_000) : reservation.expiresAt,
+            });
+            await expect(service.handleStripeWebhook(event)).resolves.toMatchObject({ refundRequested: true });
+            expect(mockTxPaymentUpdate).toHaveBeenCalledWith({
+                where: { id: 'payment-123' }, data: { status: 'PAID', paidAt: new Date(event.created * 1000) },
+            });
+        });
+
+        it('preserves an existing paidAt when retrying a nonterminal payment', async () => {
+            const { payment, event } = prepareSuccess();
+            const first = new Date(NOW.getTime() - 300_000);
+            mockTxPaymentFindUnique.mockResolvedValue({ ...payment, paidAt: first });
+            await service.handleStripeWebhook(event);
+            expect(mockTxPaymentUpdate).toHaveBeenCalledWith({
+                where: { id: payment.id }, data: { status: 'PAID', paidAt: first },
+            });
+        });
+
         it('should observe a cancellation committed while confirmation waited for the lock', async () => {
             const { reservation, event } = prepareSuccess();
             mockTxExecuteRaw.mockImplementation(async () => {
@@ -544,7 +577,7 @@ describe('PaymentsService', () => {
             expect(mockRefundSyncUpsert).toHaveBeenCalledWith(expect.objectContaining({ create: { paymentId: 'payment-block', automatic: true } }));
             expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
             expect(mockTxPaymentUpdate).toHaveBeenCalledWith({
-                where: { id: 'payment-block' }, data: { status: 'PAID' },
+                where: { id: 'payment-block' }, data: { status: 'PAID', paidAt: new Date(NOW.getTime() - 120_000) },
             });
             expect(mockTxReservationUpdate).toHaveBeenCalledWith({
                 where: { id: 'reservation-block' }, data: { status: 'EXPIRED' },
@@ -681,6 +714,7 @@ describe('PaymentsService', () => {
                 },
                 data: {
                     status: 'PAID',
+                    paidAt: new Date(event.created * 1000),
                 },
             });
 
@@ -774,6 +808,7 @@ describe('PaymentsService', () => {
                 },
                 data: {
                     status: 'PAID',
+                    paidAt: new Date(event.created * 1000),
                 },
             });
 
@@ -860,6 +895,7 @@ describe('PaymentsService', () => {
                 },
                 data: {
                     status: 'PAID',
+                    paidAt: new Date(event.created * 1000),
                 },
             });
 

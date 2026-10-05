@@ -111,6 +111,31 @@ describe('Payment concurrency with real PostgreSQL advisory locks', () => {
     return { user, room, reservation, payment, event };
   }
 
+  it('preserves paidAt across duplicate and distinct successful webhook replays', async () => {
+    const f = await fixture(false);
+    const paidAt = new Date(f.event.created * 1000);
+    await payments.handleStripeWebhook(f.event);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: f.payment.id } }))
+      .toMatchObject({ status: 'PAID', paidAt });
+
+    await payments.handleStripeWebhook({ ...f.event, created: f.event.created + 3600 });
+    await payments.handleStripeWebhook({ ...f.event, id: `evt_${randomUUID()}`, created: f.event.created + 7200 });
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: f.payment.id } }))
+      .toMatchObject({ status: 'PAID', paidAt });
+  });
+
+  it.each(['expired', 'cancelled'] as const)('retains paidAt when a %s reservation is automatically refunded', async reason => {
+    const f = await fixture(reason === 'expired');
+    if (reason === 'cancelled') await prisma.reservation.update({
+      where: { id: f.reservation.id }, data: { status: 'CANCELLED' },
+    });
+    const event = { ...f.event, created: Math.floor(Date.now() / 1000) };
+    await payments.handleStripeWebhook(event);
+    expect(await prisma.payment.findUniqueOrThrow({ where: { id: f.payment.id } }))
+      .toMatchObject({ status: 'REFUNDED', paidAt: new Date(event.created * 1000) });
+    expect(await prisma.refund.count({ where: { paymentId: f.payment.id, status: 'succeeded' } })).toBe(1);
+  });
+
   type Outcome = { ok: true; value: unknown } | { ok: false; error: unknown };
 
   it('rejects cancellation of a started CONFIRMED reservation without a cancellation notification', async () => {

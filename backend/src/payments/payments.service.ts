@@ -227,6 +227,7 @@ export class PaymentsService {
 
                 const paymentSucceededAt =
                     new Date(event.created * 1000);
+                const paidAt = payment.paidAt ?? paymentSucceededAt;
 
                 const holdExpiredBeforePayment =
                     !reservation.expiresAt ||
@@ -242,7 +243,7 @@ export class PaymentsService {
                     reservationCannotBeConfirmed
                 ) {
                     await enqueueRefundSync(tx, payment.id, true);
-                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID' } });
+                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID', paidAt } });
 
                     if (
                         reservation.status ===
@@ -313,7 +314,7 @@ export class PaymentsService {
 
                 if (conflictingReservation || conflictingBlock) {
                     await enqueueRefundSync(tx, payment.id, true);
-                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID' } });
+                    await tx.payment.update({ where: { id: payment.id }, data: { status: 'PAID', paidAt } });
 
                     if (
                         reservation.status ===
@@ -343,6 +344,7 @@ export class PaymentsService {
                     },
                     data: {
                         status: 'PAID',
+                        paidAt,
                     },
                 });
 
