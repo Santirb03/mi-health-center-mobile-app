@@ -142,6 +142,155 @@ describe('Password reset E2E', () => {
   });
 });
 
+describe('Doctor payment history E2E', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  let roomId: string;
+  const users: Array<{ id: string; doctorId?: string; token: string }> = [];
+  const time = new Date('2030-10-01T14:00:00.000Z');
+
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.init();
+    prisma = app.get(PrismaService);
+    roomId = (await prisma.room.create({ data: { name: `History ${randomUUID()}`, pricePerHour: '450.00' } })).id;
+    const password = 'HistoryPassword123!';
+    const passwordHash = await argon2.hash(password);
+    for (let index = 0; index < 3; index++) {
+      const email = `history-${randomUUID()}@test.com`;
+      const user = await prisma.user.create({ data: {
+        email, passwordHash, role: 'DOCTOR', ...(index < 2 ? {
+          doctorProfile: { create: { firstName: 'History', lastName: `Doctor ${index}` } },
+        } : {}),
+      }, include: { doctorProfile: true } });
+      users.push({ id: user.id, doctorId: user.doctorProfile?.id, token: '' });
+      const login = await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(201);
+      users[index].token = login.body.accessToken;
+    }
+  });
+  async function cleanPayments() {
+    if (!roomId) return;
+    const where = { payment: { reservation: { roomId } } };
+    await prisma.refund.deleteMany({ where });
+    await prisma.refundSync.deleteMany({ where });
+    await prisma.payment.deleteMany({ where: { reservation: { roomId } } });
+    await prisma.reservation.deleteMany({ where: { roomId } });
+  }
+  afterEach(cleanPayments);
+  afterAll(async () => {
+    try {
+      await cleanPayments();
+      if (roomId) await prisma.room.delete({ where: { id: roomId } });
+      await prisma.user.deleteMany({ where: { id: { in: users.map(user => user.id) } } });
+    } finally { await app?.close(); }
+  });
+  const history = (index = 0, cursor?: string) => request(app.getHttpServer()).get('/payments/history')
+    .auth(users[index].token, { type: 'bearer' }).query(cursor === undefined ? {} : { cursor });
+  async function fixture(data: Partial<Prisma.PaymentUncheckedCreateInput> = {}, index = 0) {
+    const reservation = await prisma.reservation.create({ data: {
+      doctorId: users[index].doctorId!, roomId, totalPrice: '450.00', status: 'CONFIRMED',
+      startTime: time, endTime: new Date(time.getTime() + 3600000),
+    } });
+    return prisma.payment.create({ data: {
+      reservationId: reservation.id, amount: '450.00', status: 'PAID', paidAt: time, createdAt: time,
+      provider: 'stripe', transactionId: `pi_${randomUUID()}`, ...data,
+    } });
+  }
+
+  it('requires JWT for payment history', async () => {
+    await request(app.getHttpServer()).get('/payments/history').expect(401);
+  });
+  it('rejects a user without a doctor profile', async () => {
+    const result = await history(2).expect(404);
+    expect(result.body.message).toBe('Doctor profile not found');
+  });
+  it('returns exact zero totals without payments', async () => {
+    await history().expect(200, { items: [], nextCursor: null, totals: { paid: '0.00', refunded: '0.00', net: '0.00' } });
+  });
+  it('isolates payment history and global totals between doctors', async () => {
+    const a = await fixture();
+    const b = await fixture({ amount: '999.00' }, 1);
+    await prisma.refund.create({ data: { id: `re_${randomUUID()}`, paymentId: b.id, amount: 9900, status: 'succeeded', createdAt: time } });
+    const first = await history().expect(200);
+    expect(first.body.items.map((item: { id: string }) => item.id)).toEqual([a.id]);
+    expect(first.body.totals).toEqual({ paid: '450.00', refunded: '0.00', net: '450.00' });
+    const second = await history(1).expect(200);
+    expect(second.body.items.map((item: { id: string }) => item.id)).toEqual([b.id]);
+    expect(second.body.totals).toEqual({ paid: '999.00', refunded: '99.00', net: '900.00' });
+  });
+  it('returns the exact item contract, final states and global totals with partial refunds', async () => {
+    const paid = await fixture({ amount: '150.10' });
+    const refunded = await fixture({ amount: '99.90', status: 'REFUNDED', paidAt: null });
+    await fixture({ amount: '50.00', status: 'PENDING', paidAt: null });
+    await fixture({ amount: '50.00', status: 'FAILED', paidAt: null });
+    for (const status of ['succeeded', 'pending', 'failed', 'canceled', 'requires_action']) {
+      await prisma.refund.create({ data: {
+        id: `re_${randomUUID()}`, paymentId: paid.id, status, amount: 3000, createdAt: time,
+      } });
+    }
+    await prisma.refundSync.create({ data: {
+      paymentId: paid.id, automatic: false, needsReview: true, lastError: 'refund_needs_attention',
+      lastCheckedAt: time, nextAttemptAt: new Date('2035-01-01T00:00:00Z'),
+    } });
+    const result = await history().expect(200);
+    expect(result.body.items.map((item: { id: string }) => item.id)).toEqual([paid.id, refunded.id].sort().reverse());
+    expect(result.body.totals).toEqual({ paid: '250.00', refunded: '30.00', net: '220.00' });
+    const item = result.body.items.find((item: { id: string }) => item.id === paid.id);
+    expect(Object.keys(item).sort()).toEqual(['id', 'reservationId', 'amount', 'status', 'paidAt', 'createdAt', 'refunds', 'refundSync', 'reservation'].sort());
+    expect(item.amount).toBe('150.10');
+    expect(item.paidAt).toBe(time.toISOString());
+    expect(item.createdAt).toBe(time.toISOString());
+    expect(item.refunds).toHaveLength(5);
+    expect(item.refunds.every((refund: { amount: number; status: string }) => refund.amount === 3000 && Object.keys(refund).length === 2)).toBe(true);
+    expect(item.refundSync).toEqual({ automatic: false, needsReview: true, lastError: 'refund_needs_attention', lastCheckedAt: time.toISOString() });
+    expect(item.reservation).toEqual({ id: paid.reservationId, startTime: time.toISOString(),
+      endTime: new Date(time.getTime() + 3600000).toISOString(), status: 'CONFIRMED', room: { id: roomId, name: expect.any(String) } });
+    expect(result.body.items.find((item: { id: string }) => item.id === refunded.id).paidAt).toBeNull();
+  });
+  it('orders by createdAt descending and uses id descending for equal timestamps', async () => {
+    const old = await fixture({ createdAt: new Date('2020-01-01T00:00:00Z') });
+    const tied = [await fixture(), await fixture()];
+    const recent = await fixture({ createdAt: new Date('2031-01-01T00:00:00Z') });
+    const result = await history().expect(200);
+    expect(result.body.items.map((item: { id: string }) => item.id))
+      .toEqual([recent.id, ...tied.map(item => item.id).sort().reverse(), old.id]);
+  });
+  it('paginates tied timestamps without omissions despite a newer insertion and keeps totals global', async () => {
+    const ids: string[] = [];
+    for (let index = 0; index < 45; index++) ids.push((await fixture({ amount: '1.00' })).id);
+    const first = await history().expect(200);
+    expect(first.body.items).toHaveLength(20);
+    expect(first.body.nextCursor).toEqual(expect.any(String));
+    expect(first.body.totals).toEqual({ paid: '45.00', refunded: '0.00', net: '45.00' });
+    await history(1, first.body.nextCursor).expect(200, { items: [], nextCursor: null, totals: null });
+    await fixture({ createdAt: new Date('2031-01-01T00:00:00Z'), amount: '1.00' });
+    const second = await history(0, first.body.nextCursor).expect(200);
+    const third = await history(0, second.body.nextCursor).expect(200);
+    expect(second.body.items).toHaveLength(20);
+    expect(third.body.items).toHaveLength(5);
+    expect(second.body.totals).toBeNull();
+    expect(third.body.totals).toBeNull();
+    expect(third.body.nextCursor).toBeNull();
+    const received = [...first.body.items, ...second.body.items, ...third.body.items].map((item: { id: string }) => item.id);
+    expect(received).toEqual(ids.sort().reverse());
+    expect(new Set(received).size).toBe(45);
+  });
+  it.each(['@@@', '', Buffer.from('not JSON').toString('base64url'),
+    Buffer.from(JSON.stringify({ id: 'invalid', time: time.toISOString() })).toString('base64url'),
+    Buffer.from(JSON.stringify({ id: randomUUID(), time: '2030-10-01T14:00:00Z' })).toString('base64url'),
+  ])('rejects invalid history cursor %s', async cursor => {
+    const result = await history(0, cursor).expect(400);
+    expect(result.body.message).toBe('Invalid payment cursor');
+  });
+  it('rejects overlong cursors and client-provided doctor identities', async () => {
+    await history(0, 'a'.repeat(513)).expect(400);
+    await request(app.getHttpServer()).get('/payments/history').auth(users[0].token, { type: 'bearer' })
+      .query({ doctorId: users[1].doctorId }).expect(400);
+  });
+});
+
 describe('Doctor reservation calendar E2E', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;

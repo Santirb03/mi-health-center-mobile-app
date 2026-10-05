@@ -5,6 +5,7 @@ import {
 
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
+import { PaymentHistoryService } from './payment-history.service';
 
 describe('PaymentsController', () => {
     let controller: PaymentsController;
@@ -23,6 +24,10 @@ describe('PaymentsController', () => {
                 ],
 
                 providers: [
+                    {
+                        provide: PaymentHistoryService,
+                        useValue: { history: jest.fn() },
+                    },
                     {
                         provide:
                             PaymentsService,
