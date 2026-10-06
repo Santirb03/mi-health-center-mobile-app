@@ -241,6 +241,8 @@ function screenFixture(state) {
   const calls = { reload: 0, more: 0, retry: 0, routes: [] };
   const resource = { state, reload: async () => calls.reload++, more: async () => calls.more++, retry: async () => calls.retry++ };
   const screen = loadWithStubs("../src/app/payments.tsx", {
+    react: { useState: value => [value, () => {}] },
+    "../components/payment-receipt-modal": { PaymentReceiptModal: "PaymentReceiptModal" },
     "react/jsx-runtime": { jsx, jsxs: jsx, Fragment: "Fragment" },
     "react-native": { Text: "Text", View: "View", ActivityIndicator: "ActivityIndicator" },
     "expo-router": { router: { push: route => calls.routes.push(route) } },

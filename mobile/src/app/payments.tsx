@@ -1,13 +1,17 @@
+import { useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { router } from "expo-router";
 import { Action, LoadState, Page, styles } from "../components/booking-ui";
 import { RefundStatus } from "../components/refund-status";
+import { PaymentReceiptModal } from "../components/payment-receipt-modal";
+import type { PaymentHistoryItem } from "../services/payment-history";
 import { usePaymentHistory } from "../hooks/use-payment-history";
 import { formatTime, money } from "../services/booking";
 import { dayLongLabel, reservationDay } from "../services/calendar";
 import { paymentDateLabel, paymentStatusText, reservationNote } from "../services/payment-history";
 
 export default function Payments() {
+  const [selected, setSelected] = useState<PaymentHistoryItem | null>(null);
   const { state, reload, more, retry } = usePaymentHistory();
   const initial = state.items.length === 0;
   return (
@@ -51,6 +55,7 @@ export default function Payments() {
             <Action title="Ver reserva" onPress={() => router.push({
               pathname: "/reservations/[id]", params: { id: item.reservationId },
             })} />
+            <Action title="Ver comprobante" variant="secondary" onPress={() => setSelected(item)} />
           </View>
         );
       })}
@@ -67,6 +72,7 @@ export default function Payments() {
         <Action title={state.loading ? "Cargando…" : "Cargar más"}
           disabled={state.loading} onPress={() => void more()} />
       )}
+      {selected && <PaymentReceiptModal key={selected.id} item={selected} onClose={() => setSelected(null)} />}
     </Page>
   );
 }
