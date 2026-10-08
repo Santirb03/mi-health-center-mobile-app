@@ -16,6 +16,139 @@ import type { Prisma } from '@prisma/client';
 
 jest.setTimeout(30000);
 
+describe('Admin dashboard E2E', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+  const users: Array<{ id: string; doctorId: string; token: string }> = [];
+  const rooms: string[] = [];
+  const range = { from: '2090-01-02', to: '2090-01-03' };
+  const at = (day: number, hour = 0, minute = 0) => new Date(`2090-01-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00-06:00`);
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    app = module.createNestApplication();
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    await app.init(); prisma = app.get(PrismaService);
+    const password = 'DashboardPassword123!'; const passwordHash = await argon2.hash(password);
+    for (const role of ['ADMIN', 'DOCTOR'] as const) {
+      const email = `dashboard-${randomUUID()}@test.com`;
+      const user = await prisma.user.create({ data: { email, passwordHash, role,
+        doctorProfile: { create: { firstName: 'Dashboard', lastName: role } } }, include: { doctorProfile: true } });
+      const login = await request(app.getHttpServer()).post('/auth/login').send({ email, password }).expect(201);
+      users.push({ id: user.id, doctorId: user.doctorProfile!.id, token: login.body.accessToken });
+    }
+    for (const [name, active, createdAt] of [
+      ['Dashboard A', true, at(1)], ['Dashboard B', true, at(3, 12)],
+      ['Dashboard historical', false, at(1)], ['Dashboard irrelevant', false, at(1)],
+    ] as const) rooms.push((await prisma.room.create({ data: { name, active, createdAt, pricePerHour: '150.10' } })).id);
+  });
+  async function clear() {
+    const where = { payment: { reservation: { roomId: { in: rooms } } } };
+    await prisma.refund.deleteMany({ where }); await prisma.refundSync.deleteMany({ where });
+    await prisma.payment.deleteMany({ where: { reservation: { roomId: { in: rooms } } } });
+    await prisma.reservation.deleteMany({ where: { roomId: { in: rooms } } });
+    await prisma.roomBlock.deleteMany({ where: { roomId: { in: rooms } } });
+  }
+  afterEach(clear);
+  afterAll(async () => {
+    try { if (prisma) { await clear(); await prisma.room.deleteMany({ where: { id: { in: rooms } } });
+      await prisma.user.deleteMany({ where: { id: { in: users.map(user => user.id) } } }); } }
+    finally { await app?.close(); }
+  });
+  const dashboard = (query: { from: string; to: string; adminId?: string } = range, index = 0) => request(app.getHttpServer())
+    .get('/admin/dashboard').auth(users[index].token, { type: 'bearer' }).query(query);
+  async function reservation(room: number, status: Prisma.ReservationUncheckedCreateInput['status'], start: Date, end: Date, expiresAt: Date | null = null) {
+    return prisma.reservation.create({ data: { roomId: rooms[room], doctorId: users[1].doctorId,
+      status, startTime: start, endTime: end, expiresAt, totalPrice: '150.10' } });
+  }
+  async function payment(reservationId: string, amount: string, status: Prisma.PaymentUncheckedCreateInput['status'] = 'PAID', paidAt: Date | null = at(2, 12)) {
+    return prisma.payment.create({ data: { reservationId, amount, status, paidAt,
+      createdAt: at(5), provider: 'stripe', transactionId: `pi_${randomUUID()}` } });
+  }
+  async function refund(paymentId: string, amount: number, status: string) {
+    return prisma.refund.create({ data: { id: `re_${randomUUID()}`, paymentId, amount, status, createdAt: at(20) } });
+  }
+  async function scenario() {
+    await reservation(0, 'CONFIRMED', at(2, 7), at(2, 9));
+    await reservation(0, 'COMPLETED', at(3, 10), at(3, 12));
+    const cancelled = await reservation(0, 'CANCELLED', at(2, 13), at(2, 14));
+    const paid = await payment(cancelled.id, '150.10');
+    await refund(paid.id, 2000, 'succeeded'); await refund(paid.id, 1000, 'succeeded');
+    await refund(paid.id, 500, 'pending'); await refund(paid.id, 500, 'requires_action');
+    await refund(paid.id, 500, 'failed'); await refund(paid.id, 500, 'canceled');
+    await reservation(0, 'EXPIRED', at(2, 14), at(2, 15));
+    await reservation(0, 'PENDING', at(2, 15), at(2, 16), new Date(Date.now() - 60000));
+    await reservation(0, 'PENDING', at(2, 16), at(2, 17));
+    await reservation(0, 'PENDING', at(2, 17), at(2, 18), new Date(Date.now() + 86400000));
+    const unpaid = await reservation(1, 'CANCELLED', at(3, 8), at(3, 9));
+    await payment(unpaid.id, '500.00', 'PENDING');
+    const historical = await reservation(2, 'CONFIRMED', at(2, 9), at(2, 10));
+    const returned = await payment(historical.id, '99.90', 'REFUNDED'); await refund(returned.id, 9990, 'succeeded');
+    for (const [hour, amount, paidAt] of [[10, '0.10', at(2)], [11, '0.20', new Date(+at(4) - 1)]] as const) {
+      const outside = await reservation(1, 'CONFIRMED', at(5, hour), at(5, hour + 1));
+      await payment(outside.id, amount, 'PAID', paidAt);
+    }
+    const excluded = await reservation(0, 'CONFIRMED', at(5, 12), at(5, 13));
+    await payment(excluded.id, '777.00', 'PAID', at(4));
+    const noDate = await reservation(0, 'CONFIRMED', at(5, 13), at(5, 14));
+    await payment(noDate.id, '888.00', 'REFUNDED', null);
+    await prisma.roomBlock.createMany({ data: [
+      { roomId: rooms[0], startTime: at(2, 10), endTime: at(2, 12) },
+      { roomId: rooms[0], startTime: at(2, 11), endTime: at(2, 13) },
+      { roomId: rooms[0], startTime: at(3, 7, 30), endTime: at(3, 8, 30) },
+    ] });
+  }
+  it('requires JWT', async () => { await request(app.getHttpServer()).get('/admin/dashboard').query(range).expect(401); });
+  it('rejects doctors with 403', async () => { await dashboard(range, 1).expect(403); });
+  it.each([
+    { from: 'bad', to: range.to }, { from: range.from, to: '2090-1-03' },
+    { from: '2090-02-30', to: '2090-03-01' }, { from: range.to, to: range.from },
+    { from: '2090-01-01', to: '2090-03-04' }, { from: range.from, to: range.to, adminId: 'ignored' },
+  ])('rejects invalid dates/range/extra authorization query %j', async query => { await dashboard(query).expect(400); });
+  it('accepts 62 inclusive days for an administrator', async () => {
+    const response = await dashboard({ from: '2090-01-01', to: '2090-03-03' }).expect(200);
+    expect(response.body.range.days).toBe(62);
+  });
+  it('classifies reservations, clips booked minutes, unites blocks and returns exact payment-period revenue', async () => {
+    await scenario();
+    const response = await dashboard().expect(200);
+    expect(response.body.range).toEqual({ ...range, days: 2 });
+    expect(response.body.reservations).toEqual({ confirmed: 2, completed: 1, cancelled: 2, expired: 3, pendingActive: 1 });
+    expect(response.body.cancellations).toEqual({ cancelled: 2, cancelledWithPayment: 1 });
+    expect(response.body.revenue).toEqual({ paid: '250.30', refunded: '129.90', net: '120.40' });
+    expect(response.body.rooms).toEqual([
+      { roomId: rooms[0], name: 'Dashboard A', active: true, bookedMinutes: 180, availableMinutes: 1350, utilizationBp: 1333, paid: '150.10', net: '120.10' },
+      { roomId: rooms[1], name: 'Dashboard B', active: true, bookedMinutes: 0, availableMinutes: 780, utilizationBp: 0, paid: '0.30', net: '0.30' },
+      { roomId: rooms[2], name: 'Dashboard historical', active: false, bookedMinutes: 60, availableMinutes: 0, utilizationBp: null, paid: '99.90', net: '0.00' },
+    ]);
+    expect(new Date(response.body.generatedAt).toISOString()).toBe(response.body.generatedAt);
+    // Projection never persists expiry or touches payment/refund state.
+    expect(await prisma.reservation.count({ where: { roomId: rooms[0], status: 'PENDING' } })).toBe(3);
+    process.stdout.write(`DASHBOARD_REAL_RESPONSE ${JSON.stringify(response.body)}\n`);
+  });
+  it('keeps utilization above 100 percent visible when data conflicts with blocks', async () => {
+    await reservation(0, 'CONFIRMED', at(2, 8), at(2, 21));
+    await prisma.roomBlock.create({ data: { roomId: rooms[0], startTime: at(2, 8), endTime: at(2, 20) } });
+    const response = await dashboard({ from: range.from, to: range.from }).expect(200);
+    const room = response.body.rooms.find((entry: { roomId: string }) => entry.roomId === rooms[0]);
+    expect(room.bookedMinutes).toBe(780); expect(room.availableMinutes).toBe(60); expect(room.utilizationBp).toBe(130000);
+  });
+  it('counts startTime on the inclusive first day and excludes next-day midnight', async () => {
+    await reservation(0, 'CANCELLED', at(2), at(2, 1));
+    await reservation(0, 'CANCELLED', at(4), at(4, 1));
+    const response = await dashboard().expect(200);
+    expect(response.body.reservations.cancelled).toBe(1); expect(response.body.cancellations.cancelledWithPayment).toBe(0);
+    expect(response.body.revenue).toEqual({ paid: '0.00', refunded: '0.00', net: '0.00' });
+  });
+  it('retains an inactive room with only payment-period activity', async () => {
+    const outside = await reservation(3, 'COMPLETED', at(5, 10), at(5, 11));
+    await payment(outside.id, '19.99');
+    const response = await dashboard().expect(200);
+    expect(response.body.rooms.find((entry: { roomId: string }) => entry.roomId === rooms[3])).toEqual({
+      roomId: rooms[3], name: 'Dashboard irrelevant', active: false, bookedMinutes: 0, availableMinutes: 0, utilizationBp: null, paid: '19.99', net: '19.99',
+    });
+  });
+});
+
 describe('Password reset E2E', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;

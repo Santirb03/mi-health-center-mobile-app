@@ -14,8 +14,8 @@ import { Prisma } from '@prisma/client';
 import { isUUID } from 'class-validator';
 import { refundSummarySelection } from '../payments/refunds';
 
-const OPENING_HOUR = 8;
-const CLOSING_HOUR = 21;
+export const OPENING_HOUR = 8;
+export const CLOSING_HOUR = 21;
 
 const PENDING_HOLD_MINUTES = 8;
 
