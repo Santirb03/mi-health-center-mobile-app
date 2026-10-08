@@ -1,6 +1,7 @@
 import { api } from "./api";
 import type { PaymentSummary } from '../components/refund-status';
 import type { Reservation } from "./reservations";
+import type { DashboardResponse } from "./dashboard";
 
 export type AgendaStatus = Reservation["status"];
 export const agendaStatusLabels: Record<AgendaStatus, string> = {
@@ -53,4 +54,8 @@ export async function getAgenda(filters: AgendaFilters, signal: AbortSignal) {
 }
 export async function getAgendaRooms(signal: AbortSignal) {
   return (await api.get<AgendaRoom[]>("/admin/rooms", { signal })).data;
+}
+
+export async function getDashboard(from: string, to: string, signal: AbortSignal) {
+  return (await api.get<DashboardResponse>("/admin/dashboard", { params: { from, to }, signal })).data;
 }

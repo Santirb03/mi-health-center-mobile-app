@@ -81,6 +81,10 @@ function SessionNavigator() {
           options={{ headerShown: true, title: "Administración" }}
         />
         <Stack.Screen
+          name="admin-dashboard"
+          options={{ headerShown: true, title: "Administración" }}
+        />
+        <Stack.Screen
           name="rooms/[id]"
           options={{ headerShown: true, title: "Consultorio" }}
         />

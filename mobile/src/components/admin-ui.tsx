@@ -30,6 +30,12 @@ export const adminSections = [
     description: "Cierra horarios por mantenimiento u otros motivos.",
     symbol: "03",
   },
+  {
+    route: "/admin-dashboard",
+    title: "Resumen",
+    description: "Ocupación, ingresos y cancelaciones del periodo.",
+    symbol: "04",
+  },
 ] as const;
 
 export function AdminNav({
