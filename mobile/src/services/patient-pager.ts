@@ -1,4 +1,4 @@
-import type { Patient, PatientPage } from "./patients";
+import type { Patient } from "./patients";
 
 export type QueryKind = "all" | "too_short" | "too_long" | "too_many_terms" | "search";
 export function normalizeQuery(text: string): { kind: Exclude<QueryKind, "search"> } | { kind: "search"; q: string } {
@@ -9,8 +9,8 @@ export function normalizeQuery(text: string): { kind: Exclude<QueryKind, "search
   if (q.split(" ").length > 4) return { kind: "too_many_terms" };
   return { kind: "search", q };
 }
-export interface PatientListState {
-  items: Patient[];
+export interface PatientListState<Item = Patient> {
+  items: Item[];
   nextCursor: string | null;
   query: string;
   kind: QueryKind;
@@ -24,16 +24,17 @@ export const queryMessage = (kind: QueryKind) => ({
   all: null, search: null,
 })[kind];
 
-export function createPatientPager(
-  read: (q: string | undefined, cursor: string | null, signal: AbortSignal) => Promise<PatientPage>,
+export function createPatientPager<Item extends { id: string } = Patient>(
+  read: (q: string | undefined, cursor: string | null, signal: AbortSignal) => Promise<{ items: Item[]; nextCursor: string | null }>,
+  errorMessage = "No pudimos cargar tus pacientes. Intenta de nuevo.",
 ) {
-  let state: PatientListState = { items: [], nextCursor: null, query: "", kind: "all", loading: false, error: null };
+  let state: PatientListState<Item> = { items: [], nextCursor: null, query: "", kind: "all", loading: false, error: null };
   let request: AbortController | undefined;
   let generation = 0;
   let disposed = false;
   let initialized = false;
   const listeners = new Set<() => void>();
-  function update(next: PatientListState) {
+  function update(next: PatientListState<Item>) {
     if (disposed) return;
     state = next;
     listeners.forEach(listener => listener());
@@ -58,7 +59,7 @@ export function createPatientPager(
       update({ ...previous, items: [...items.values()], nextCursor: page.nextCursor, loading: false, error: null });
     } catch {
       if (!disposed && !controller.signal.aborted && current === generation)
-        update({ ...previous, loading: false, error: "No pudimos cargar tus pacientes. Intenta de nuevo." });
+        update({ ...previous, loading: false, error: errorMessage });
     } finally {
       if (request === controller) request = undefined;
     }

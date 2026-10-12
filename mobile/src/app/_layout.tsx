@@ -64,6 +64,9 @@ function SessionNavigator() {
       <Stack.Screen name="forgot-password" />
       <Stack.Screen name="reset-password" />
       <Stack.Protected guard={authenticated}>
+        <Stack.Screen name="appointments/index" options={{ headerShown: true, title: "Citas" }} />
+        <Stack.Screen name="appointments/[id]" options={{ headerShown: true, title: "Cita" }} />
+        <Stack.Screen name="appointments/form" options={{ headerShown: true, title: "Cita" }} />
         <Stack.Screen name="home" />
         <Stack.Screen name="patients/index" options={{ headerShown: true, title: "Pacientes" }} />
         <Stack.Screen name="patients/[id]" options={{ headerShown: true, title: "Paciente" }} />
