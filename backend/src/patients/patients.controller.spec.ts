@@ -9,6 +9,7 @@ describe('PatientsController', () => {
     const mockPatientsService = {
         create: jest.fn(),
         findAll: jest.fn(),
+        findPage: jest.fn(),
         findOne: jest.fn(),
         update: jest.fn(),
     };
@@ -41,6 +42,14 @@ describe('PatientsController', () => {
 
     it('should be defined', () => {
         expect(controller).toBeDefined();
+    });
+
+    it('forwards page query and authenticated user without accepting ownership from the query', async () => {
+        const query = { q: 'John Doe' };
+        const response = { items: [], nextCursor: null };
+        mockPatientsService.findPage.mockResolvedValue(response);
+        expect(await controller.findPage(mockRequest, query)).toBe(response);
+        expect(mockPatientsService.findPage).toHaveBeenCalledWith('user-1', query);
     });
 
     describe('create', () => {

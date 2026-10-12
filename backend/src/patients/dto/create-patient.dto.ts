@@ -1,29 +1,38 @@
 import {
-    IsDateString,
     IsEmail,
     IsOptional,
     IsString,
-    MinLength,
+    IsPhoneNumber,
+    Length,
+    MaxLength,
 } from 'class-validator';
+import { IsBirthDate, NormalizePhone, TrimText } from './patient-validation';
 
 export class CreatePatientDto {
+    @TrimText()
     @IsString()
-    @MinLength(2)
+    @Length(2, 80)
     firstName: string;
 
+    @TrimText()
     @IsString()
-    @MinLength(2)
+    @Length(2, 80)
     lastName: string;
 
     @IsOptional()
+    @NormalizePhone()
     @IsString()
-    phone?: string;
+    @MaxLength(40)
+    @IsPhoneNumber('MX')
+    phone?: string | null;
 
     @IsOptional()
+    @TrimText()
     @IsEmail()
-    email?: string;
+    @MaxLength(254)
+    email?: string | null;
 
     @IsOptional()
-    @IsDateString()
-    dateOfBirth?: string;
+    @IsBirthDate()
+    dateOfBirth?: string | null;
 }

@@ -301,6 +301,185 @@ describe('Backend adversarial audit E2E', () => {
     });
   });
 
+  describe('patients 5B search, validation and isolation', () => {
+    let doctorId: string;
+    let secondDoctorId: string;
+    let privateId: string;
+    let profilelessUserId: string;
+    let profilelessToken: string;
+    const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
+    const orderBy = [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }] as const;
+    beforeAll(async () => {
+      doctorId = (await prisma.doctorProfile.findUniqueOrThrow({ where: { userId: doctorUserId } })).id;
+      secondDoctorId = (await prisma.doctorProfile.findUniqueOrThrow({ where: { userId: secondDoctorUserId } })).id;
+      const adminDoctorId = (await prisma.doctorProfile.findUniqueOrThrow({ where: { userId: adminUserId } })).id;
+      await prisma.patient.createMany({ data: [
+        ...Array.from({ length: 45 }, (_, index) => ({
+          doctorId, firstName: index % 2 ? 'Page' : 'page',
+          lastName: ['Same', 'Álvarez', 'Zulu'][index % 3],
+        })),
+        { doctorId, firstName: 'PrivateOnly', lastName: 'OwnerOnly', phone: '4421234567' },
+        { doctorId: secondDoctorId, firstName: 'SecondOnly', lastName: 'OwnerOnly' },
+        { doctorId: adminDoctorId, firstName: 'AdminOnly', lastName: 'OwnerOnly' },
+        { doctorId, firstName: 'JohnCase', lastName: 'SmithCase', email: 'MixedCase@Example.com', phone: '4427654321' },
+        { doctorId, firstName: 'ab%literal', lastName: 'Literal' },
+        { doctorId, firstName: 'abXwildcard', lastName: 'Literal' },
+        { doctorId, firstName: 'a_literal', lastName: 'Literal' },
+        { doctorId, firstName: 'aXwildcard', lastName: 'Literal' },
+        { doctorId, firstName: 'a\\literal', lastName: 'Literal' },
+      ] });
+      privateId = (await prisma.patient.findFirstOrThrow({ where: { doctorId, firstName: 'PrivateOnly' } })).id;
+      const profileless = await registerAndLogin('patients-no-profile');
+      profilelessUserId = profileless.userId;
+      profilelessToken = profileless.accessToken;
+      await prisma.doctorProfile.delete({ where: { userId: profilelessUserId } });
+    });
+    afterAll(async () => {
+      if (profilelessUserId) await prisma.user.delete({ where: { id: profilelessUserId } });
+    });
+    it('paginates all rows in PostgreSQL order without duplicates, omissions or internal fields', async () => {
+      const expected = await prisma.patient.findMany({ where: { doctorId }, orderBy: [...orderBy] });
+      expect(expected.length).toBeGreaterThan(40);
+      const collected: string[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const response = await request(app.getHttpServer()).get('/patients/page')
+          .query(cursor ? { cursor } : {}).set(auth(doctorAccessToken)).expect(200);
+        expect(response.body.items.length).toBeLessThanOrEqual(20);
+        for (const item of response.body.items) {
+          expect(Object.keys(item).sort()).toEqual([
+            'id', 'firstName', 'lastName', 'phone', 'email', 'dateOfBirth', 'createdAt', 'updatedAt',
+          ].sort());
+          collected.push(item.id);
+        }
+        cursor = response.body.nextCursor;
+        expect(++pages).toBeLessThan(10);
+      } while (cursor !== null);
+      expect(new Set(collected).size).toBe(collected.length);
+      expect(collected).toEqual(expected.map(patient => patient.id));
+      expect(pages).toBeGreaterThanOrEqual(3);
+    });
+    it('keeps legacy list responses and isolates both doctors and ADMIN with a doctor profile', async () => {
+      for (const [userId, token] of [[doctorUserId, doctorAccessToken],
+        [secondDoctorUserId, secondDoctorAccessToken], [adminUserId, adminAccessToken]]) {
+        const profile = await prisma.doctorProfile.findUniqueOrThrow({ where: { userId } });
+        const expected = await prisma.patient.findMany({ where: { doctorId: profile.id }, orderBy: [...orderBy] });
+        const legacy = await request(app.getHttpServer()).get('/patients').set(auth(token)).expect(200);
+        expect(Array.isArray(legacy.body)).toBe(true);
+        expect(legacy.body.map((item: any) => item.id).sort()).toEqual(expected.map(item => item.id).sort());
+        expect(legacy.body.every((item: any) => item.doctorId === profile.id)).toBe(true);
+        const page = await request(app.getHttpServer()).get('/patients/page').set(auth(token)).expect(200);
+        expect(page.body.items.map((item: any) => item.id)).toEqual(expected.slice(0, 20).map(item => item.id));
+      }
+    });
+    it('never reveals foreign patients through search, IDs, edits or another owner cursor', async () => {
+      for (const token of [secondDoctorAccessToken, adminAccessToken]) {
+        const search = await request(app.getHttpServer()).get('/patients/page')
+          .query({ q: 'PrivateOnly OwnerOnly' }).set(auth(token)).expect(200);
+        expect(search.body).toEqual({ items: [], nextCursor: null });
+        await request(app.getHttpServer()).get(`/patients/${privateId}`).set(auth(token)).expect(404);
+        await request(app.getHttpServer()).patch(`/patients/${privateId}`).set(auth(token))
+          .send({ firstName: 'Stolen' }).expect(404);
+        const source = await request(app.getHttpServer()).get('/patients/page').set(auth(doctorAccessToken)).expect(200);
+        expect(source.body.nextCursor).toEqual(expect.any(String));
+        const page = await request(app.getHttpServer()).get('/patients/page')
+          .query({ cursor: source.body.nextCursor }).set(auth(token)).expect(200);
+        const profile = await prisma.doctorProfile.findUniqueOrThrow({
+          where: { userId: token === adminAccessToken ? adminUserId : secondDoctorUserId },
+        });
+        const own = await prisma.patient.findMany({ where: { doctorId: profile.id } });
+        expect(page.body.items.every((item: any) => own.some(patient => patient.id === item.id))).toBe(true);
+      }
+    });
+    it('preserves missing-profile errors and requires authentication', async () => {
+      await request(app.getHttpServer()).get('/patients/page').expect(401);
+      for (const path of ['/patients', '/patients/page', `/patients/${privateId}`]) {
+        const response = await request(app.getHttpServer()).get(path).set(auth(profilelessToken)).expect(404);
+        expect(response.body.message).toBe('Doctor profile not found');
+      }
+    });
+    it.each([
+      [' johncase   SMITHCASE ', 'JohnCase'], ['mixedcase@example.com', 'JohnCase'],
+      ['442765', 'JohnCase'], ['ab%', 'ab%literal'], ['a_', 'a_literal'], ['a\\', 'a\\literal'],
+    ])('searches terms and literal wildcard characters: %s', async (q, firstName) => {
+      const response = await request(app.getHttpServer()).get('/patients/page')
+        .query({ q }).set(auth(doctorAccessToken)).expect(200);
+      expect(response.body.items.map((item: any) => item.firstName)).toEqual([firstName]);
+    });
+    it('requires all search terms, supports four terms and paginates filtered searches', async () => {
+      const response = await request(app.getHttpServer()).get('/patients/page')
+        .query({ q: 'JohnCase SmithCase mixedcase@example.com 442765' }).set(auth(doctorAccessToken)).expect(200);
+      expect(response.body.items).toHaveLength(1);
+      const none = await request(app.getHttpServer()).get('/patients/page')
+        .query({ q: 'JohnCase Zulu' }).set(auth(doctorAccessToken)).expect(200);
+      expect(none.body.items).toEqual([]);
+      const expected = await prisma.patient.findMany({ where: { doctorId,
+        firstName: { contains: 'page', mode: 'insensitive' } }, orderBy: [...orderBy] });
+      const ids: string[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < 4; page++) {
+        const result = await request(app.getHttpServer()).get('/patients/page')
+          .query({ q: ' PAGE ', ...(cursor ? { cursor } : {}) }).set(auth(doctorAccessToken)).expect(200);
+        ids.push(...result.body.items.map((item: any) => item.id));
+        cursor = result.body.nextCursor;
+        if (cursor === null) break;
+      }
+      expect(cursor).toBeNull();
+      expect(ids).toEqual(expected.map(patient => patient.id));
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+    it.each(['x', '%', 'a'.repeat(81), 'one two three four five', '   '])('rejects query %s', async q => {
+      await request(app.getHttpServer()).get('/patients/page').query({ q }).set(auth(doctorAccessToken)).expect(400);
+    });
+    it('rejects malformed cursors, foreign query fields and mismatched search', async () => {
+      const source = await request(app.getHttpServer()).get('/patients/page')
+        .query({ q: 'page' }).set(auth(doctorAccessToken)).expect(200);
+      const mismatch = await request(app.getHttpServer()).get('/patients/page')
+        .query({ q: 'same', cursor: source.body.nextCursor }).set(auth(doctorAccessToken)).expect(400);
+      expect(mismatch.body.message).toBe('Invalid patient cursor');
+      const malformed = await request(app.getHttpServer()).get('/patients/page')
+        .query({ cursor: '??' }).set(auth(doctorAccessToken)).expect(400);
+      expect(malformed.body.message).toBe('Invalid patient cursor');
+      const oversized = await request(app.getHttpServer()).get('/patients/page')
+        .query({ cursor: 'a'.repeat(2049) }).set(auth(doctorAccessToken)).expect(400);
+      expect(oversized.body.message).toBe('Invalid patient cursor');
+      await request(app.getHttpServer()).get('/patients/page')
+        .query({ doctorId: secondDoctorId }).set(auth(doctorAccessToken)).expect(400);
+    });
+    it('normalizes creation, preserves response contract and clears date/contact to null', async () => {
+      const created = await request(app.getHttpServer()).post('/patients').set(auth(doctorAccessToken)).send({
+        firstName: ' Jane ', lastName: ' Doe ', phone: '+52 (442) 123-4567',
+        email: ' Jane@Example.com ', dateOfBirth: '2000-02-29',
+      }).expect(201);
+      patientIds.push(created.body.id);
+      expect(created.body).toMatchObject({ doctorId, firstName: 'Jane', lastName: 'Doe',
+        phone: '+524421234567', email: 'Jane@Example.com', dateOfBirth: '2000-02-29T00:00:00.000Z' });
+      for (const field of ['phone', 'email', 'dateOfBirth'] as const) {
+        const patched = await request(app.getHttpServer()).patch(`/patients/${created.body.id}`)
+          .set(auth(doctorAccessToken)).send({ [field]: null }).expect(200);
+        expect(patched.body[field]).toBeNull();
+        expect((await prisma.patient.findUniqueOrThrow({ where: { id: created.body.id } }))[field]).toBeNull();
+      }
+      const detail = await request(app.getHttpServer()).get(`/patients/${created.body.id}`)
+        .set(auth(doctorAccessToken)).expect(200);
+      expect(detail.body.doctorId).toBe(doctorId);
+      for (const optional of [{}, { phone: null, email: null, dateOfBirth: null }]) {
+        const response = await request(app.getHttpServer()).post('/patients').set(auth(doctorAccessToken))
+          .send({ firstName: 'Jane', lastName: 'Doe', ...optional }).expect(201);
+        patientIds.push(response.body.id);
+        expect(response.body).toMatchObject({ phone: null, email: null, dateOfBirth: null });
+      }
+    });
+    it.each([{}, { firstName: null }, { firstName: ' ' }, { doctorId: 'foreign' },
+      { dateOfBirth: '2025-02-30' }, { dateOfBirth: '9999-01-01' },
+      { dateOfBirth: '1899-12-31' }, { dateOfBirth: '1990-01-01T00:00:00Z' },
+      { phone: '' }, { email: '' }])('rejects invalid patch %p', async body => {
+      await request(app.getHttpServer()).patch(`/patients/${privateId}`)
+        .set(auth(doctorAccessToken)).send(body).expect(400);
+    });
+  });
+
   describe('availability and administrative blocks', () => {
     let blockId: string;
 

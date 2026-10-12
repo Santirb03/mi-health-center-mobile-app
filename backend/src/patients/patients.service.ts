@@ -7,6 +7,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
+import { PatientPageDto } from './dto/patient-page.dto';
+import { decodePatientCursor, encodePatientCursor, patientPageWhere, searchTerms } from './patient-search';
 
 @Injectable()
 export class PatientsService {
@@ -15,21 +17,11 @@ export class PatientsService {
     ) { }
 
     async create(userId: string, dto: CreatePatientDto) {
-        const doctor = await this.prisma.doctorProfile.findUnique({
-            where: {
-                userId,
-            },
-        });
-
-        if (!doctor) {
-            throw new NotFoundException(
-                'Doctor profile not found',
-            );
-        }
+        const doctorId = await this.requireDoctorId(userId);
 
         const patient = await this.prisma.patient.create({
             data: {
-                doctorId: doctor.id,
+                doctorId,
                 firstName: dto.firstName,
                 lastName: dto.lastName,
                 phone: dto.phone,
@@ -44,21 +36,11 @@ export class PatientsService {
     }
 
     async findAll(userId: string) {
-        const doctor = await this.prisma.doctorProfile.findUnique({
-            where: {
-                userId,
-            },
-        });
-
-        if (!doctor) {
-            throw new NotFoundException(
-                'Doctor profile not found',
-            );
-        }
+        const doctorId = await this.requireDoctorId(userId);
 
         return this.prisma.patient.findMany({
             where: {
-                doctorId: doctor.id,
+                doctorId,
             },
             orderBy: {
                 lastName: 'asc',
@@ -67,22 +49,12 @@ export class PatientsService {
     }
 
     async findOne(userId: string, patientId: string) {
-        const doctor = await this.prisma.doctorProfile.findUnique({
-            where: {
-                userId,
-            },
-        });
-
-        if (!doctor) {
-            throw new NotFoundException(
-                'Doctor profile not found',
-            );
-        }
+        const doctorId = await this.requireDoctorId(userId);
 
         const patient = await this.prisma.patient.findFirst({
             where: {
                 id: patientId,
-                doctorId: doctor.id,
+                doctorId,
             },
         });
 
@@ -100,22 +72,12 @@ export class PatientsService {
         patientId: string,
         dto: UpdatePatientDto,
     ) {
-        const doctor = await this.prisma.doctorProfile.findUnique({
-            where: {
-                userId,
-            },
-        });
-
-        if (!doctor) {
-            throw new NotFoundException(
-                'Doctor profile not found',
-            );
-        }
+        const doctorId = await this.requireDoctorId(userId);
 
         const patient = await this.prisma.patient.findFirst({
             where: {
                 id: patientId,
-                doctorId: doctor.id,
+                doctorId,
             },
         });
 
@@ -159,9 +121,38 @@ export class PatientsService {
                 }),
 
                 ...(dto.dateOfBirth !== undefined && {
-                    dateOfBirth: new Date(dto.dateOfBirth),
+                    dateOfBirth: dto.dateOfBirth === null ? null : new Date(dto.dateOfBirth),
                 }),
             },
         });
+    }
+    private async requireDoctorId(userId: string): Promise<string> {
+        const doctor = await this.prisma.doctorProfile.findUnique({ where: { userId } });
+        if (!doctor) throw new NotFoundException('Doctor profile not found');
+        return doctor.id;
+    }
+
+    async findPage(userId: string, query: PatientPageDto) {
+        const doctorId = await this.requireDoctorId(userId);
+        const terms = searchTerms(query.q);
+        const q = terms.join(' ');
+        const cursor = query.cursor === undefined ? undefined : decodePatientCursor(query.cursor, q);
+        const rows = await this.prisma.patient.findMany({
+            where: patientPageWhere(doctorId, terms, cursor),
+            orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }, { id: 'asc' }],
+            take: 21,
+            select: {
+                id: true, firstName: true, lastName: true, phone: true, email: true,
+                dateOfBirth: true, createdAt: true, updatedAt: true,
+            },
+        });
+        const items = rows.slice(0, 20);
+        const last = items[items.length - 1];
+        return {
+            items,
+            nextCursor: rows.length > 20 && last ? encodePatientCursor({
+                l: last.lastName, f: last.firstName, i: last.id, ...(q ? { q } : {}),
+            }) : null,
+        };
     }
 }

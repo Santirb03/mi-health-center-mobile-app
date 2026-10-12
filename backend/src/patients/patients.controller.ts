@@ -5,6 +5,7 @@ import {
     Param,
     Patch,
     Post,
+    Query,
     Req,
     UseGuards,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { PatientsService } from './patients.service';
 import { CreatePatientDto } from './dto/create-patient.dto';
 import { UpdatePatientDto } from './dto/update-patient.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { PatientPageDto } from './dto/patient-page.dto';
 
 interface AuthenticatedRequest extends Request {
     user: {
@@ -49,6 +51,12 @@ export class PatientsController {
         return this.patientsService.findAll(
             req.user.userId,
         );
+    }
+
+    @Get('page')
+    @UseGuards(JwtAuthGuard)
+    findPage(@Req() req: AuthenticatedRequest, @Query() query: PatientPageDto) {
+        return this.patientsService.findPage(req.user.userId, query);
     }
 
     @Get(':id')
