@@ -20,6 +20,12 @@ Configura NODE_ENV=production, DATABASE_URL de staging, JWT_SECRET aleatorio de 
 
 ## Aplicar migraciones y arrancar
 
+La entrega de citas requiere instalar y conservar `btree_gist`. Verifica esa capacidad y los permisos de instalación antes de elegir hosting. La migración de citas conserva datos históricos y aborta si hay intervalos inválidos, pacientes de otro propietario o traslapes no cancelados; no corrige ni elimina registros automáticamente.
+
+`appointments_end_after_start` (CHECK) y `appointments_doctor_no_overlap` (EXCLUDE) son SQL manual, no propiedades modeladas por Prisma. Un `migrate diff` vacío no prueba su existencia: verifica los catálogos con `test/appointment-constraints.cjs` después de migrar, desplegar y restaurar. Revisa futuras migraciones antes de aplicarlas; no sustituyas el esquema por SQL generado que pierda estas restricciones. `node test/appointment-migration.cjs` ensaya migración desde cero, repetición y comparación Prisma en PostgreSQL desechable.
+
+Las operaciones de citas bloquean primero doctor (`pg_advisory_xact_lock(7101, hashtext(doctorId))`) y después consultorios, ordenados por sus claves hash PostgreSQL. Cada lock de consultorio conserva `pg_advisory_xact_lock(hashtext(roomId))`, compartido con reservas y cancelaciones. Reprogramar entre consultorios bloquea ambos en ese orden; no inviertas el protocolo.
+
 Ejecuta una única fase de migración por entrega con la misma versión de código y DATABASE_URL del servidor. Antes de actualizar una base con datos, revisa el SQL y confirma un backup recuperable.
 
 La migración `20261002000000_payment_paid_at` agrega la fecha del primer cobro conocido. Para pagos históricos PAID/REFUNDED aproxima `paidAt` con `updatedAt`; no garantiza la fecha real del cobro. `paidAt` puede seguir siendo null para pagos antiguos/no conciliados que no recibieron backfill.

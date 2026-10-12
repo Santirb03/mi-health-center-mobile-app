@@ -128,7 +128,9 @@ model Reservation {
   doctor  DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Restrict)
   room    Room          @relation(fields: [roomId], references: [id])
   payment Payment?
+  appointments Appointment[]
 
+  @@unique([id, doctorId])
   @@index([doctorId])
   @@index([roomId])
   @@index([startTime, endTime])
@@ -150,6 +152,7 @@ model Patient {
   doctor       DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
   appointments Appointment[]
 
+  @@unique([id, doctorId])
   @@index([doctorId])
   @@map("patients")
 }
@@ -158,6 +161,7 @@ model Appointment {
   id        String            @id @default(uuid())
   doctorId  String
   patientId String
+  reservationId String?
   roomId    String?
   startTime DateTime
   endTime   DateTime
@@ -167,10 +171,12 @@ model Appointment {
   updatedAt DateTime          @updatedAt
 
   doctor  DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  patient Patient       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient Patient       @relation(fields: [patientId, doctorId], references: [id, doctorId], onDelete: Cascade)
+  reservation Reservation? @relation(fields: [reservationId, doctorId], references: [id, doctorId], onDelete: Restrict)
   room    Room?         @relation(fields: [roomId], references: [id], onDelete: SetNull)
 
   @@index([doctorId])
+  @@index([doctorId, startTime])
   @@index([patientId])
   @@index([roomId])
   @@index([startTime, endTime])

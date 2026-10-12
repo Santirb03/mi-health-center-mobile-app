@@ -7,6 +7,7 @@ const path = require('node:path');
 const { Client } = require('pg');
 const { PrismaClient } = require('@prisma/client');
 const { PrismaPg } = require('@prisma/adapter-pg');
+const { verifyAppointmentConstraints } = require('./appointment-constraints.cjs');
 
 const root = path.resolve(__dirname, '..');
 const name = `mhc-backup-test-${randomUUID()}`;
@@ -81,6 +82,7 @@ async function main() {
   assert.ok(source, 'Disposable PostgreSQL did not become ready');
   console.log('Applying repository migrations to disposable source database.');
   migrate(sourceUrl, 'deploy');
+  await verifyAppointmentConstraints(source);
   prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: sourceUrl }) });
   const user = await prisma.user.create({ data: {
     email: 'backup-doctor@example.invalid', passwordHash: 'synthetic-not-a-login-hash',
@@ -109,7 +111,7 @@ async function main() {
     roomId: room.id, startTime: new Date('2035-01-11T14:00:00Z'), endTime: new Date('2035-01-11T15:00:00Z'), reason: 'Mantenimiento ficticio',
   } });
   const patient = await prisma.patient.create({ data: { doctorId, firstName: 'Paciente', lastName: 'Ficticio' } });
-  await prisma.appointment.create({ data: { doctorId, patientId: patient.id, roomId: room.id, startTime, endTime } });
+  await prisma.appointment.create({ data: { doctorId, patientId: patient.id, reservationId: reservation.id, roomId: room.id, startTime, endTime } });
   await prisma.stripeWebhookEvent.create({ data: { id: 'evt_synthetic_backup', type: 'payment_intent.succeeded' } });
   const fixturePayment = await prisma.payment.findUniqueOrThrow({ where: { reservationId: reservation.id } });
   await prisma.refundSync.create({ data: { paymentId: fixturePayment.id } });
@@ -138,6 +140,9 @@ async function main() {
   exec('pg_restore', '-U', 'postgres', '-d', targetName, '--no-owner', '--no-acl', '--exit-on-error', '--single-transaction', archive);
   assert.equal(exec('sha256sum', archive).split(' ')[0], checksum);
   assert.deepEqual(await snapshot(target), expected, 'Restored data/schema differ from backup source');
+  await verifyAppointmentConstraints(target);
+  migrate(targetUrl, 'deploy');
+  await verifyAppointmentConstraints(target);
   migrate(targetUrl, 'status');
   await assert.rejects(target.query('UPDATE reservations SET "roomId" = $1 WHERE id = $2', ['missing-room', reservation.id]), { code: '23503' });
   await assert.rejects(target.query('UPDATE users SET email = $1 WHERE id = $2', ['backup-admin@example.invalid', user.id]), { code: '23505' });

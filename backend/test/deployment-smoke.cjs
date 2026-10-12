@@ -6,6 +6,8 @@ const { randomBytes } = require('node:crypto');
 const { readFileSync } = require('node:fs');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const { Client } = require('pg');
+const { verifyAppointmentConstraints } = require('./appointment-constraints.cjs');
 
 async function main() {
   assert.equal(process.env.DEPLOYMENT_TEST_ISOLATED, '1');
@@ -22,6 +24,14 @@ async function main() {
     const result = spawnSync(process.execPath, [prisma, ...args], { env, stdio: 'inherit', timeout: 60000 });
     if (result.error || result.status !== 0) throw new Error('Migration verification failed');
   }
+  // Select an unused local port; this process owns only the child it starts.
+  const catalog = new Client({ connectionString: env.DATABASE_URL });
+  try {
+    await catalog.connect();
+    await verifyAppointmentConstraints(catalog);
+    console.log('Deployment catalog passed: btree_gist, CHECK, EXCLUDE, composite FKs and unique indexes.');
+  } finally { await catalog.end(); }
+
   // Select an unused local port; this process owns only the child it starts.
   const socket = createServer();
   socket.listen(0, '127.0.0.1');

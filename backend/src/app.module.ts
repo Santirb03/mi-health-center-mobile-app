@@ -13,6 +13,7 @@ import { validateEnvironment } from './config/environment';
 import { HealthController } from './health/health.controller';
 import { HttpObservabilityModule } from './observability/http-observability.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { AppointmentsModule } from './appointments/appointments.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -29,6 +30,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     PaymentsModule,
     NotificationsModule,
     DashboardModule,
+    AppointmentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],
